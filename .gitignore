@@ -1,0 +1,18 @@
+# 构建输出
+build/
+dist/
+
+# Qt 生成的 MOC/UIC 文件
+moc_mainwindow.cpp
+GeneratedFiles/
+
+# 模型文件
+*.engine
+
+# 输出目录
+output/
+
+# IDE
+.vs/
+*.user
+*.suo

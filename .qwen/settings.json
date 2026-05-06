@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cmd *)",
+      "Bash(x64\\debug\\yolo11_1.exe)"
+    ]
+  },
+  "$version": 3
+}

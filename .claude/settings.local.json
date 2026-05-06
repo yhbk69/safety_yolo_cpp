@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(C:/Qt/5.15.2/msvc2019_64/bin/windeployqt.exe *)",
+      "Bash(cp \"C:/tensorRT10/TensorRT-10.1.0.27/lib/nvinfer_10.dll\" \"D:/dltt/yolo_cpp/yolo11_1/dist/\")",
+      "Bash(cp \"C:/tensorRT10/TensorRT-10.1.0.27/lib/nvinfer_plugin_10.dll\" \"D:/dltt/yolo_cpp/yolo11_1/dist/\")",
+      "Bash(cp \"C:/tensorRT10/TensorRT-10.1.0.27/lib/nvonnxparser_10.dll\" \"D:/dltt/yolo_cpp/yolo11_1/dist/\")",
+      "Bash(cmake .. -G \"Visual Studio 18 2026\" -A x64 -DQt5_DIR=\"C:/Qt/5.15.2/msvc2019_64/lib/cmake/Qt5\" -DCMAKE_BUILD_TYPE=Release)",
+      "Bash(cmake --build . --config Release)",
+      "Bash(dir /s /b \"moc_mainwindow*\")"
+    ]
+  }
+}

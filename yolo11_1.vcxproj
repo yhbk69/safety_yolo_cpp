@@ -1,0 +1,245 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|Win32">
+      <Configuration>Debug</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|Win32">
+      <Configuration>Release</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <VCProjectVersion>18.0</VCProjectVersion>
+    <Keyword>Win32Proj</Keyword>
+    <ProjectGuid>{ab9dfa41-fdd0-47ad-a7b0-c9b89baa11be}</ProjectGuid>
+    <RootNamespace>yolo111</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v145</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v145</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v145</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v145</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings">
+  </ImportGroup>
+  <ImportGroup Label="Shared">
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <!--
+    Qt 5.15.2 配置说明:
+    1. 从 https://download.qt.io/archive/qt/5.15/5.15.2/ 下载安装
+    2. 安装时选择 MSVC 2019 64-bit 组件
+    3. 安装完成后修改下方 QTDIR 为实际安装路径
+    4. 本配置假设安装路径为: C:/Qt/Qt5.15.2/5.15.2/msvc2019_64
+  -->
+  <PropertyGroup>
+    <QTDIR Condition="'$(QTDIR)' == ''">C:\Qt\5.15.2\msvc2019_64</QTDIR>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>WIN32;_DEBUG;_CONSOLE;QT_WIDGETS_LIB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;QT_WIDGETS_LIB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>_DEBUG;_CONSOLE;QT_WIDGETS_LIB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalIncludeDirectories>
+        C:\opencv412\opencv\build\include;
+        C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.4\include;
+        C:\tensorRT10\TensorRT-10.1.0.27\include;
+        $(QTDIR)\include;
+        $(QTDIR)\include\QtWidgets;
+        $(QTDIR)\include\QtCore;
+        $(QTDIR)\include\QtGui;
+        $(QTDIR)\include\QtWebSockets;
+        $(QTDIR)\include\QtNetwork;
+        $(ProjectDir)GeneratedFiles;
+        %(AdditionalIncludeDirectories)
+      </AdditionalIncludeDirectories>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalLibraryDirectories>
+        C:\opencv412\opencv\build\x64\vc16\lib;
+        C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.4\lib\x64;
+        C:\tensorRT10\TensorRT-10.1.0.27\lib;
+        $(QTDIR)\lib;
+        %(AdditionalLibraryDirectories)
+      </AdditionalLibraryDirectories>
+      <AdditionalDependencies>
+        opencv_world4120d.lib;
+        cudart.lib;
+        nvinfer_10.lib;
+        nvonnxparser_10.lib;
+        Qt5Widgetsd.lib;
+        Qt5Guid.lib;
+        Qt5Cored.lib;
+        Qt5WebSocketsd.lib;
+        Qt5Networkd.lib;
+        qtmaind.lib;
+        %(AdditionalDependencies)
+      </AdditionalDependencies>
+    </Link>
+    <PreBuildEvent>
+      <Command>if not exist "$(ProjectDir)GeneratedFiles" mkdir "$(ProjectDir)GeneratedFiles"
+"$(QTDIR)\bin\uic.exe" "$(ProjectDir)mainwindow.ui" -o "$(ProjectDir)GeneratedFiles\ui_mainwindow.h"
+"$(QTDIR)\bin\moc.exe" "$(ProjectDir)mainwindow.hpp" -o "$(ProjectDir)moc_mainwindow.cpp" -I"$(ProjectDir)" -I"$(QTDIR)\include" -I"$(QTDIR)\include\QtWidgets" -I"$(QTDIR)\include\QtCore" -I"$(QTDIR)\include\QtGui" -I"$(QTDIR)\include\QtWebSockets" -I"$(QTDIR)\include\QtNetwork"</Command>
+      <Message>Running UIC + MOC...</Message>
+    </PreBuildEvent>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>NDEBUG;_CONSOLE;QT_WIDGETS_LIB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalIncludeDirectories>
+        C:\opencv412\opencv\build\include;
+        C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.4\include;
+        C:\tensorRT10\TensorRT-10.1.0.27\include;
+        $(QTDIR)\include;
+        $(QTDIR)\include\QtWidgets;
+        $(QTDIR)\include\QtCore;
+        $(QTDIR)\include\QtGui;
+        $(QTDIR)\include\QtWebSockets;
+        $(QTDIR)\include\QtNetwork;
+        $(ProjectDir)GeneratedFiles;
+        %(AdditionalIncludeDirectories)
+      </AdditionalIncludeDirectories>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalLibraryDirectories>
+        C:\opencv412\opencv\build\x64\vc16\lib;
+        C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.4\lib\x64;
+        C:\tensorRT10\TensorRT-10.1.0.27\lib;
+        $(QTDIR)\lib;
+        %(AdditionalLibraryDirectories)
+      </AdditionalLibraryDirectories>
+      <AdditionalDependencies>
+        opencv_world4120.lib;
+        cudart.lib;
+        nvinfer_10.lib;
+        nvonnxparser_10.lib;
+        Qt5Widgets.lib;
+        Qt5Gui.lib;
+        Qt5Core.lib;
+        Qt5WebSockets.lib;
+        Qt5Network.lib;
+        qtmain.lib;
+        %(AdditionalDependencies)
+      </AdditionalDependencies>
+    </Link>
+    <PreBuildEvent>
+      <Command>if not exist "$(ProjectDir)GeneratedFiles" mkdir "$(ProjectDir)GeneratedFiles"
+"$(QTDIR)\bin\uic.exe" "$(ProjectDir)mainwindow.ui" -o "$(ProjectDir)GeneratedFiles\ui_mainwindow.h"
+"$(QTDIR)\bin\moc.exe" "$(ProjectDir)mainwindow.hpp" -o "$(ProjectDir)moc_mainwindow.cpp" -I"$(ProjectDir)" -I"$(QTDIR)\include" -I"$(QTDIR)\include\QtWidgets" -I"$(QTDIR)\include\QtCore" -I"$(QTDIR)\include\QtGui" -I"$(QTDIR)\include\QtWebSockets" -I"$(QTDIR)\include\QtNetwork"</Command>
+      <Message>Running UIC + MOC...</Message>
+    </PreBuildEvent>
+  </ItemDefinitionGroup>
+  <!--
+    Qt MOC (Meta-Object Compiler): 处理 mainwindow.hpp 中的 Q_OBJECT 宏.
+    使用 .vcxproj 构建需要安装 Qt VS Tools 扩展(免费), 它会自动处理 MOC.
+    使用 CMake 构建则 AUTOMOC 会自动处理, 无需任何扩展.
+  -->
+  <ItemGroup>
+    <ClCompile Include="main.cpp" />
+    <ClCompile Include="mainwindow.cpp" />
+    <ClCompile Include="moc_mainwindow.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="config.hpp" />
+    <ClInclude Include="inference_runner.hpp" />
+    <ClInclude Include="logger.hpp" />
+    <ClInclude Include="mainwindow.hpp" />
+    <ClInclude Include="postprocessor.hpp" />
+    <ClInclude Include="preprocessor.hpp" />
+    <ClInclude Include="types.hpp" />
+    <ClInclude Include="yolo_trt_engine.hpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="mainwindow.ui" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets">
+  </ImportGroup>
+</Project>
