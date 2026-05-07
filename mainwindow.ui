@@ -20,14 +20,14 @@
    <string>YOLO11 PPE 检测系统</string>
   </property>
   <property name="styleSheet">
-   <string notr="true">QWidget { font-size: 15px; }
-QLabel { font-size: 15px; }
-QPushButton { font-size: 15px; padding: 6px 12px; }
-QLineEdit { font-size: 15px; padding: 4px; }
-QComboBox { font-size: 15px; }
-QListWidget { font-size: 15px; }
-QTextEdit { font-size: 15px; }
-QSlider { height: 24px; }</string>
+   <string notr="true">QWidget { font-size: 20px; }
+QLabel { font-size: 20px; }
+QPushButton { font-size: 20px; padding: 8px 16px; }
+QLineEdit { font-size: 20px; padding: 6px; }
+QComboBox { font-size: 20px; }
+QListWidget { font-size: 20px; }
+QTextEdit { font-size: 20px; }
+QSlider { height: 28px; }</string>
   </property>
   <widget class="QWidget" name="centralWidget">
    <layout class="QVBoxLayout" name="mainLayout">
@@ -55,7 +55,7 @@ QSlider { height: 24px; }</string>
        <widget class="QLabel" name="modelLabel">
         <property name="font">
          <font>
-          <pointsize>18</pointsize>
+          <pointsize>24</pointsize>
          </font>
         </property>
         <property name="text">
@@ -136,7 +136,7 @@ QSlider { height: 24px; }</string>
          border-radius: 8px;
          background-color: #1e1e1e;
          color: #888;
-         font-size: 18px;
+         font-size: 24px;
         }</string>
        </property>
        <property name="text">
@@ -166,7 +166,7 @@ QSlider { height: 24px; }</string>
         <item>
          <widget class="QLabel" name="resultTitleLabel">
           <property name="styleSheet">
-           <string notr="true">font-size: 18px; font-weight: bold;</string>
+           <string notr="true">font-size: 24px; font-weight: bold;</string>
           </property>
           <property name="text">
            <string>检测结果</string>
@@ -182,8 +182,8 @@ QSlider { height: 24px; }</string>
            </size>
           </property>
           <property name="styleSheet">
-           <string notr="true">QListWidget { font-size: 15px; }
-QListWidget::item { padding: 6px; }</string>
+           <string notr="true">QListWidget { font-size: 20px; }
+QListWidget::item { padding: 8px; }</string>
           </property>
           <property name="alternatingRowColors">
            <bool>false</bool>
@@ -193,7 +193,7 @@ QListWidget::item { padding: 6px; }</string>
         <item>
          <widget class="QLabel" name="totalCountLabel">
           <property name="styleSheet">
-           <string notr="true">font-size: 15px; color: #555;</string>
+           <string notr="true">font-size: 20px; color: #555;</string>
           </property>
           <property name="text">
            <string>目标总数: 0</string>
@@ -203,7 +203,7 @@ QListWidget::item { padding: 6px; }</string>
         <item>
          <widget class="QLabel" name="logTitleLabel">
           <property name="styleSheet">
-           <string notr="true">font-size: 18px; font-weight: bold; margin-top: 8px;</string>
+           <string notr="true">font-size: 24px; font-weight: bold; margin-top: 8px;</string>
           </property>
           <property name="text">
            <string>运行日志</string>
@@ -216,7 +216,7 @@ QListWidget::item { padding: 6px; }</string>
            <bool>true</bool>
           </property>
           <property name="styleSheet">
-           <string notr="true">QTextEdit { font-family: Consolas, Monaco, monospace; font-size: 14px; background-color: #1e1e1e; color: #d4d4d4; }</string>
+           <string notr="true">QTextEdit { font-family: Consolas, Monaco, monospace; font-size: 18px; background-color: #1e1e1e; color: #d4d4d4; }</string>
           </property>
          </widget>
         </item>
@@ -224,12 +224,12 @@ QListWidget::item { padding: 6px; }</string>
          <widget class="QPushButton" name="clearLogBtn">
           <property name="maximumSize">
            <size>
-            <width>120</width>
+            <width>140</width>
             <height>16777215</height>
            </size>
           </property>
           <property name="styleSheet">
-           <string notr="true">font-size: 14px;</string>
+           <string notr="true">font-size: 18px;</string>
           </property>
           <property name="text">
            <string>清空日志</string>
