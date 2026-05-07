@@ -244,6 +244,10 @@ MainWindow::MainWindow(QWidget *parent)
 
     // 设置批量推理复选框初始状态
     ui->batchInferenceCheck->setChecked(Config::USE_BATCH_INFERENCE);
+
+    // 初始日志
+    log("系统", "YOLO11 PPE 检测系统已启动");
+    log("配置", QString("模型路径: %1").arg(QString::fromStdString(Config::MODEL_PATH)));
 }
 
 MainWindow::~MainWindow() {
@@ -279,6 +283,10 @@ void MainWindow::setupConnections() {
     connect(ui->confSlider, &QSlider::valueChanged, this, &MainWindow::onConfThresholdChanged);
     connect(ui->nmsSlider,  &QSlider::valueChanged, this, &MainWindow::onNmsThresholdChanged);
     connect(ui->batchInferenceCheck, &QCheckBox::toggled, this, &MainWindow::onBatchInferenceToggled);
+    connect(ui->clearLogBtn, &QPushButton::clicked, this, [this]() {
+        ui->logTextEdit->clear();
+        log("系统", "日志已清空");
+    });
     connect(ui->actionOpenImage, &QAction::triggered, this, &MainWindow::onOpenImage);
     connect(ui->actionOpenVideo, &QAction::triggered, this, &MainWindow::onOpenVideo);
     connect(ui->actionOpenCamera, &QAction::triggered, this, &MainWindow::onOpenCamera);
@@ -293,15 +301,17 @@ void MainWindow::startWebSocketServer() {
     wsServer_ = new QWebSocketServer("YOLO11-Alert", QWebSocketServer::NonSecureMode, this);
     if (!wsServer_->listen(QHostAddress::Any, Config::WEBSOCKET_PORT)) {
         wsAddressLabel_->setText("WebSocket: 启动失败");
+        log("WebSocket", QString("启动失败, 端口: %1").arg(Config::WEBSOCKET_PORT));
         return;
     }
 
     connect(wsServer_, &QWebSocketServer::newConnection, this, &MainWindow::onWsClientConnected);
 
-    wsAddressLabel_->setText(
-        QString("WebSocket: ws://%1:%2")
-            .arg(QString::fromStdString(Config::HOST_IP))
-            .arg(Config::WEBSOCKET_PORT));
+    QString wsAddr = QString("ws://%1:%2")
+        .arg(QString::fromStdString(Config::HOST_IP))
+        .arg(Config::WEBSOCKET_PORT);
+    wsAddressLabel_->setText("WebSocket: " + wsAddr);
+    log("WebSocket", QString("服务已启动 %1").arg(wsAddr));
 
     // 启动 HTTP 文件服务器
     startHttpFileServer();
@@ -391,11 +401,13 @@ void MainWindow::onWsClientConnected() {
 
     connect(socket, &QWebSocket::textMessageReceived, this, &MainWindow::onWsTextMessage);
     connect(socket, &QWebSocket::disconnected, this, [this, socket]() {
+        log("WebSocket", QString("客户端断开连接, 剩余: %1").arg(wsClients_.size() - 1));
         wsClients_.removeAll(socket);
         socket->deleteLater();
     });
     statusMessageLabel_->setText(
         QString("WebSocket 客户端已连接 (%1)").arg(wsClients_.size()));
+    log("WebSocket", QString("客户端已连接, 当前连接数: %1").arg(wsClients_.size()));
 }
 
 void MainWindow::onWsTextMessage(const QString& message) {
@@ -418,6 +430,7 @@ void MainWindow::onWsTextMessage(const QString& message) {
         pendingAlarms_.erase(it);
         statusMessageLabel_->setText(
             QString("告警 %1 已确认").arg(alarmId.left(8)));
+        log("WebSocket", QString("收到告警确认: %1").arg(alarmId.left(8)));
     }
 }
 
@@ -431,6 +444,7 @@ void MainWindow::retryAlarm(const QString& alarmId) {
     }
     statusMessageLabel_->setText(
         QString("重发告警 %1").arg(alarmId.left(8)));
+    log("告警", QString("重发告警: %1").arg(alarmId.left(8)));
 }
 
 // ============================================================
@@ -466,6 +480,7 @@ void MainWindow::onAlertSaved(const QString& videoPath, const QString& imagePath
     QString alarmType = doc.object()["data"].toObject()["alarm_type"].toString();
     statusMessageLabel_->setText(
         QString("[告警] %1 - 视频已保存, 等待确认").arg(alarmType));
+    log("告警", QString("发送告警: %1, ID: %2").arg(alarmType, alarmId.left(8)));
     qDebug() << "Alarm sent:" << alertJson;
 }
 
@@ -502,11 +517,13 @@ void MainWindow::onLoadModel() {
         ui->modelStatusLabel->setText("✓ 已加载");
         ui->modelStatusLabel->setStyleSheet("color: green; font-weight: bold;");
         statusMessageLabel_->setText("模型加载成功, 可以开始检测");
+        log("模型", QString("模型加载成功: %1").arg(modelPath));
         enableControls(true);
     } catch (const std::exception& e) {
         ui->modelStatusLabel->setText("✗ 加载失败");
         ui->modelStatusLabel->setStyleSheet("color: red; font-weight: bold;");
         statusMessageLabel_->setText("模型加载失败");
+        log("模型", QString("模型加载失败: %1").arg(e.what()));
         QMessageBox::critical(this, "模型加载错误", e.what());
         enableControls(false);
     }
@@ -522,6 +539,7 @@ void MainWindow::onOpenImage() {
     QString filePath = QFileDialog::getOpenFileName(
         this, "选择图片", "", "图片文件 (*.jpg *.jpeg *.png *.bmp);;所有文件 (*)");
     if (filePath.isEmpty()) return;
+    log("检测", QString("打开图片: %1").arg(filePath));
     statusMessageLabel_->setText("正在推理...");
     QApplication::processEvents();
     processSingleImage(filePath.toStdString());
@@ -568,6 +586,7 @@ void MainWindow::onOpenVideo() {
         this, "选择视频文件", "", "视频文件 (*.mp4 *.avi *.mov *.mkv);;所有文件 (*)");
     if (filePath.isEmpty()) return;
 
+    log("检测", QString("打开视频: %1").arg(filePath));
     statusMessageLabel_->setText("正在处理视频...");
     enableControls(false);
     ui->stopBtn->setEnabled(true);
@@ -592,6 +611,7 @@ void MainWindow::onOpenCamera() {
     if (!engine_) { QMessageBox::warning(this, "提示", "请先加载模型"); return; }
     if (isProcessing_) onStopProcessing();
 
+    log("检测", "启动摄像头推理");
     statusMessageLabel_->setText("正在启动摄像头...");
     enableControls(false);
     ui->stopBtn->setEnabled(true);
@@ -619,6 +639,8 @@ void MainWindow::onOpenFolder() {
     QString dirPath = QFileDialog::getExistingDirectory(
         this, "选择图片文件夹", "", QFileDialog::ShowDirsOnly);
     if (dirPath.isEmpty()) return;
+
+    log("检测", QString("批量处理文件夹: %1").arg(dirPath));
 
     std::vector<std::string> extensions = {".jpg", ".jpeg", ".png", ".bmp"};
     int total = 0, succ = 0;
@@ -683,6 +705,12 @@ void MainWindow::onFrameProcessed(QImage image, std::vector<Detection> detection
     if (elapsedMs > 0) {
         double fps = 1000.0 / elapsedMs;
         fpsLabel_->setText(QString("FPS: %1").arg(fps, 0, 'f', 1));
+        // 每10帧输出一次检测日志
+        static int frameCount = 0;
+        if (++frameCount % 10 == 0) {
+            log("检测", QString("检测到 %1 个目标, 耗时: %2ms, FPS: %3")
+                .arg(detections.size()).arg(elapsedMs, 0, 'f', 1).arg(fps, 0, 'f', 1));
+        }
     }
 }
 
@@ -698,9 +726,11 @@ void MainWindow::onWorkerFinished() {
     ui->stopBtn->setEnabled(false);
     statusMessageLabel_->setText("处理完成");
     fpsLabel_->setText("FPS: --");
+    log("系统", "处理任务已完成");
 }
 
 void MainWindow::onWorkerError(const QString& message) {
+    log("错误", message);
     QMessageBox::critical(this, "处理错误", message);
     onWorkerFinished();
 }
@@ -775,8 +805,27 @@ void MainWindow::onBatchInferenceToggled(bool checked) {
     // 注意: 批量推理配置在编译时固定, 此处仅提示用户
     if (checked) {
         statusMessageLabel_->setText("批量推理已启用 (batch=4, 需重新编译生效)");
+        log("配置", "批量推理已启用 (batch=4)");
     } else {
         statusMessageLabel_->setText("批量推理已禁用 (需重新编译生效)");
+        log("配置", "批量推理已禁用");
     }
     qDebug() << "Batch inference toggled:" << checked;
+}
+
+// ============================================================
+// 日志输出
+// ============================================================
+QString MainWindow::currentTimestamp() {
+    return QDateTime::currentDateTime().toString("hh:mm:ss");
+}
+
+void MainWindow::log(const QString& category, const QString& message) {
+    QString timestamp = currentTimestamp();
+    QString formatted = QString("[%1][%2] %3").arg(timestamp, category, message);
+    ui->logTextEdit->append(formatted);
+    // 自动滚动到底部
+    QTextCursor cursor = ui->logTextEdit->textCursor();
+    cursor.movePosition(QTextCursor::End);
+    ui->logTextEdit->setTextCursor(cursor);
 }

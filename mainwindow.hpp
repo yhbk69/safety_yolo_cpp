@@ -133,6 +133,10 @@ private:
     QLabel* timeLabel_;
     QLabel* wsAddressLabel_;
 
+    // 日志输出函数
+    void log(const QString& category, const QString& message);
+    QString currentTimestamp();
+
     std::unique_ptr<YoloTrtEngine> engine_;
     QThread*  workerThread_ = nullptr;
     InferenceWorker* worker_ = nullptr;
