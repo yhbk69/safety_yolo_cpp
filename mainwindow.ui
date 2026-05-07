@@ -19,17 +19,17 @@
   <property name="windowTitle">
    <string>YOLO11 PPE 检测系统</string>
   </property>
-  <property name="styleSheet">
-   <string notr="true">QWidget { font-size: 20px; }
+  <widget class="QWidget" name="centralWidget">
+   <property name="styleSheet">
+   <string notr="true">* { font-size: 20px; }
 QLabel { font-size: 20px; }
-QPushButton { font-size: 20px; padding: 8px 16px; }
-QLineEdit { font-size: 20px; padding: 6px; }
-QComboBox { font-size: 20px; }
+QPushButton { font-size: 20px; padding: 8px 16px; min-height: 32px; }
+QLineEdit { font-size: 20px; padding: 6px; min-height: 28px; }
+QComboBox { font-size: 20px; min-height: 28px; }
 QListWidget { font-size: 20px; }
 QTextEdit { font-size: 20px; }
 QSlider { height: 28px; }</string>
-  </property>
-  <widget class="QWidget" name="centralWidget">
+   </property>
    <layout class="QVBoxLayout" name="mainLayout">
     <property name="spacing">
      <number>0</number>
