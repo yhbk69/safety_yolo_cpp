@@ -27,7 +27,7 @@ QPushButton { font-size: 24px; padding: 8px 16px; min-height: 32px; }
 QLineEdit { font-size: 24px; padding: 6px; min-height: 28px; }
 QComboBox { font-size: 24px; min-height: 28px; }
 QListWidget { font-size: 24px; }
-QTextEdit { font-size: 60px; }
+QTextEdit { font-size: 18px; }
 QSlider { height: 28px; }</string>
    </property>
    <layout class="QVBoxLayout" name="mainLayout">

@@ -607,7 +607,7 @@ void MainWindow::onOpenVideo() {
     connect(worker_, &InferenceWorker::alertSaved, this, &MainWindow::onAlertSaved);
     connect(worker_, &InferenceWorker::finished, this, &MainWindow::onWorkerFinished);
     connect(worker_, &InferenceWorker::errorOccurred, this, &MainWindow::onWorkerError);
-    connect(workerThread_, &QThread::started, this, [this, filePath]() {
+    connect(workerThread_, &QThread::started, worker_, [this, filePath]() {
         worker_->processVideo(filePath, confThreshold_, nmsThreshold_);
     });
     connect(workerThread_, &QThread::finished, worker_, &QObject::deleteLater);
@@ -632,7 +632,7 @@ void MainWindow::onOpenCamera() {
     connect(worker_, &InferenceWorker::alertSaved, this, &MainWindow::onAlertSaved);
     connect(worker_, &InferenceWorker::finished, this, &MainWindow::onWorkerFinished);
     connect(worker_, &InferenceWorker::errorOccurred, this, &MainWindow::onWorkerError);
-    connect(workerThread_, &QThread::started, this, [this]() {
+    connect(workerThread_, &QThread::started, worker_, [this]() {
         worker_->processCamera(confThreshold_, nmsThreshold_);
     });
     connect(workerThread_, &QThread::finished, worker_, &QObject::deleteLater);
@@ -725,11 +725,27 @@ void MainWindow::onFrameProcessed(QImage image, std::vector<Detection> detection
     if (elapsedMs > 0) {
         double fps = 1000.0 / elapsedMs;
         fpsLabel_->setText(QString("FPS: %1").arg(fps, 0, 'f', 1));
-        // 每10帧输出一次检测日志
-        static int frameCount = 0;
-        if (++frameCount % 10 == 0) {
-            log("检测", QString("检测到 %1 个目标, 耗时: %2ms, FPS: %3")
-                .arg(detections.size()).arg(elapsedMs, 0, 'f', 1).arg(fps, 0, 'f', 1));
+    }
+    // 每5帧输出一次检测详情日志
+    static int logFrameCount = 0;
+    if (++logFrameCount % 5 == 0) {
+        if (detections.empty()) {
+            log("检测", "未检测到目标");
+        } else {
+            // 统计各类别数量
+            std::map<int, int> classCounts;
+            for (const auto& det : detections) {
+                classCounts[det.class_id]++;
+            }
+            QString detail;
+            for (const auto& [cid, cnt] : classCounts) {
+                if (!detail.isEmpty()) detail += ", ";
+                detail += QString("%1×%2").arg(cnt).arg(QString::fromStdString(Config::CLASS_NAMES[cid]));
+            }
+            double fps = (elapsedMs > 0) ? 1000.0 / elapsedMs : 0;
+            log("检测", QString("%1 | %2 | %3ms, FPS:%4")
+                .arg(detections.size()).arg(detail)
+                .arg(elapsedMs, 0, 'f', 1).arg(fps, 0, 'f', 1));
         }
     }
 }

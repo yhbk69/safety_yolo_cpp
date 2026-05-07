@@ -1,18 +1,31 @@
-# 构建输出
+# Build output
 build/
 dist/
+x64/
 
-# Qt 生成的 MOC/UIC 文件
+# Qt generated MOC/UIC files
 moc_mainwindow.cpp
 GeneratedFiles/
 
-# 模型文件
+# Model files
 *.engine
+*.onnx
+*.pt
+*.pth
+*.weights
+*.trt
 
-# 输出目录
+# Output directory
 output/
 
 # IDE
 .vs/
+.vscode/
 *.user
 *.suo
+*.sln
+*.vcxproj*
+
+# OS
+Thumbs.db
+.DS_Store
