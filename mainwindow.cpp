@@ -315,11 +315,25 @@ void MainWindow::startMjpegServer() {
     connect(mjpegServer_, &QTcpServer::newConnection, this, [this]() {
         auto* socket = mjpegServer_->nextPendingConnection();
         if (!socket) return;
+        
+        // 发送HTTP响应头
+        QByteArray header = 
+            "HTTP/1.1 200 OK\r\n"
+            "Content-Type: multipart/x-mixed-replace; boundary=frame\r\n"
+            "Connection: keep-alive\r\n"
+            "Cache-Control: no-cache\r\n"
+            "Access-Control-Allow-Origin: *\r\n"
+            "\r\n";
+        socket->write(header);
+        socket->flush();
+        
         mjpegClients_.append(socket);
         connect(socket, &QTcpSocket::disconnected, this, [this, socket]() {
             mjpegClients_.removeAll(socket);
             socket->deleteLater();
+            log(QString::fromUtf8("MJPEG"), "客户端已断开");
         });
+        log(QString::fromUtf8("MJPEG"), "新客户端已连接");
     });
     log(QString::fromUtf8("MJPEG"),
         QString::fromUtf8("服务已启动: http://%1:%2/stream")
@@ -596,6 +610,7 @@ void MainWindow::onWsTextMessage(const QString& message) {
         if (client) {
             client->sendTextMessage(pongDoc.toJson(QJsonDocument::Compact));
         }
+        log("WebSocket", "收到 ping, 回复 pong");
         return;
     }
 
@@ -1282,12 +1297,10 @@ void MainWindow::onFrameProcessed(int cameraId, QImage image, std::vector<Detect
         double fps = 1000.0 / elapsedMs;
         fpsLabel_->setText(QString("FPS: %1").arg(fps, 0, 'f', 1));
     }
-    // 每5帧输出一次检测详情日志
+    // 每5帧输出一次检测详情日志（只在检测到目标时输出）
     static int logFrameCount = 0;
     if (++logFrameCount % 5 == 0) {
-        if (detections.empty()) {
-            log("检测", "未检测到目标");
-        } else {
+        if (!detections.empty()) {
             // 统计各类别数量
             std::map<int, int> classCounts;
             for (const auto& det : detections) {
@@ -1440,10 +1453,13 @@ void MainWindow::closeEvent(QCloseEvent* event) {
     // 停止所有录像
     for (auto it = cameraRecordings_.begin(); it != cameraRecordings_.end(); ++it) {
         auto rec = it.value();
-        if (rec && rec->isRecording && rec->writer && rec->writer->isOpened()) {
-            rec->writer->release();
+        if (rec) {
+            if (rec->isRecording && rec->writer && rec->writer->isOpened()) {
+                rec->writer->release();
+            }
+            if (rec->writer) delete rec->writer;
+            delete rec;  // ← 修复: 释放 CameraRecording 对象本身
         }
-        delete rec->writer;
     }
     cameraRecordings_.clear();
     if (isProcessing_) isProcessing_ = false;
@@ -1653,12 +1669,33 @@ QString MainWindow::currentTimestamp() {
 
 void MainWindow::log(const QString& category, const QString& message) {
     QString timestamp = currentTimestamp();
-    QString formatted = QString("[%1][%2] %3").arg(timestamp, category, message);
+    
+    // 根据不同类别设置颜色
+    QString color;
+    if (category == QString::fromUtf8("告警") || category == QString::fromUtf8("错误")) {
+        color = "#e74c3c";  // 红色 - 告警/错误
+    } else if (category == QString::fromUtf8("检测")) {
+        color = "#27ae60";  // 绿色 - 检测
+    } else if (category == QString::fromUtf8("录像")) {
+        color = "#e67e22";  // 橙色 - 录像
+    } else if (category == QString::fromUtf8("WebSocket") || category == QString::fromUtf8("MJPEG")) {
+        color = "#3498db";  // 蓝色 - 网络相关
+    } else if (category == QString::fromUtf8("配置")) {
+        color = "#9b59b6";  // 紫色 - 配置
+    } else if (category == QString::fromUtf8("系统")) {
+        color = "#34495e";  // 深灰 - 系统
+    } else {
+        color = "#7f8c8d";  // 灰色 - 其他
+    }
+    
+    QString formatted = QString("<span style='color:%1; font-size:22px;'>[%2][%3] %4</span>")
+        .arg(color, timestamp, category, message);
+    
     ui->logTextEdit->append(formatted);
     // 自动滚动到底部
-    QTextCursor cursor = ui->logTextEdit->textCursor();
-    cursor.movePosition(QTextCursor::End);
-    ui->logTextEdit->setTextCursor(cursor);
+    //QTextCursor cursor = ui->logTextEdit->textCursor();
+    //cursor.movePosition(QTextCursor::End);
+    //ui->logTextEdit->setTextCursor(cursor);
 }
 
 // ============================================================

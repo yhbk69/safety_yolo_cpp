@@ -53,7 +53,7 @@ namespace Config {
     const std::string OUTPUT_DIR = "output";
 
     // Letterbox填充颜色(BGR格式). 默认灰色(114,114,114), 与YOLO训练时一致
-    const cv::Scalar LETTERBOX_FILL_COLOR = cv::Scalar(114, 114, 11412);
+    const cv::Scalar LETTERBOX_FILL_COLOR = cv::Scalar(114, 114, 114);
 
     // ============ WebSocket 告警推送配置 ============
 
