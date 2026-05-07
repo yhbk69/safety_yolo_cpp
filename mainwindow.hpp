@@ -15,6 +15,12 @@
 #include <QDir>
 #include <QTcpServer>
 #include <QTcpSocket>
+#include <QDialog>
+#include <QFormLayout>
+#include <QSpinBox>
+#include <QDoubleSpinBox>
+#include <QLineEdit>
+#include <QDialogButtonBox>
 #include <atomic>
 #include <deque>
 #include <unordered_map>
@@ -28,6 +34,7 @@
 #include "postprocessor.hpp"
 #include "types.hpp"
 #include "config.hpp"
+#include "runtime_config.hpp"
 
 namespace Ui { class MainWindow; }
 
@@ -126,6 +133,7 @@ private slots:
     void onConfThresholdChanged(int value);
     void onNmsThresholdChanged(int value);
     void onBatchInferenceToggled(bool checked);
+    void onSettings();
     void onFrameProcessed(int cameraId, QImage image, std::vector<Detection> detections, double elapsedMs);
     void onWorkerFinished(int cameraId);
     void onWorkerError(int cameraId, const QString& message);
@@ -148,6 +156,8 @@ private:
     void startWebSocketServer();
     void startHttpFileServer();
     void closeEvent(QCloseEvent* event) override;
+    void loadRuntimeConfig();
+    void saveRuntimeConfig();
 
     // 多摄像头管理
     struct CameraWorker {

@@ -95,6 +95,13 @@ QSlider { height: 28px; }</string>
        </widget>
       </item>
       <item>
+       <widget class="QPushButton" name="settingsBtn">
+        <property name="text">
+         <string>设置</string>
+        </property>
+       </widget>
+      </item>
+      <item>
        <widget class="QLabel" name="modelStatusLabel">
         <property name="styleSheet">
          <string notr="true">color: gray; font-weight: bold;</string>

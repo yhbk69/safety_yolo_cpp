@@ -327,6 +327,9 @@ MainWindow::MainWindow(QWidget *parent)
 
     QDir().mkpath(QString::fromStdString(Config::OUTPUT_DIR));
 
+    // 加载运行时配置(JSON)
+    loadRuntimeConfig();
+
     startWebSocketServer();
     if (fs::exists(Config::MODEL_PATH)) onLoadModel();
 
@@ -366,6 +369,7 @@ void MainWindow::setupConnections() {
     connect(ui->openVideoBtn,  &QPushButton::clicked, this, &MainWindow::onOpenVideo);
     connect(ui->cameraBtn,     &QPushButton::toggled, this, &MainWindow::onOpenCamera);
     connect(ui->addCameraBtn,  &QPushButton::clicked, this, &MainWindow::onAddCamera);
+    connect(ui->settingsBtn,    &QPushButton::clicked, this, &MainWindow::onSettings);
     connect(ui->folderBtn,     &QPushButton::clicked, this, &MainWindow::onOpenFolder);
     connect(ui->stopBtn,       &QPushButton::clicked, this, &MainWindow::onStopProcessing);
     connect(ui->browseModelBtn, &QPushButton::clicked, this, &MainWindow::onBrowseModel);
@@ -1136,6 +1140,134 @@ void MainWindow::log(const QString& category, const QString& message) {
     QTextCursor cursor = ui->logTextEdit->textCursor();
     cursor.movePosition(QTextCursor::End);
     ui->logTextEdit->setTextCursor(cursor);
+}
+
+// ============================================================
+// 运行时配置
+// ============================================================
+void MainWindow::loadRuntimeConfig() {
+    auto& cfg = RuntimeConfig::instance();
+    QString cfgPath = QDir::currentPath() + "/config.json";
+    if (QFile::exists(cfgPath)) {
+        if (cfg.loadFromFile(cfgPath)) {
+            log(QString::fromUtf8("配置"), QString::fromUtf8("已加载运行时配置: %1").arg(cfgPath));
+        } else {
+            log(QString::fromUtf8("配置"), QString::fromUtf8("配置文件解析失败, 使用默认值"));
+        }
+    } else {
+        // 首次运行, 生成默认配置文件
+        cfg.saveToFile(cfgPath);
+        log(QString::fromUtf8("配置"), QString::fromUtf8("已生成默认配置: %1").arg(cfgPath));
+    }
+
+    // 用运行时配置覆盖UI初始值
+    confThreshold_ = cfg.confThreshold();
+    nmsThreshold_  = cfg.iouThreshold();
+    ui->modelPathEdit->setText(cfg.modelPath());
+    ui->confSlider->setValue(static_cast<int>(confThreshold_ * 100));
+    ui->nmsSlider->setValue(static_cast<int>(nmsThreshold_ * 100));
+}
+
+void MainWindow::saveRuntimeConfig() {
+    auto& cfg = RuntimeConfig::instance();
+    cfg.setConfThreshold(confThreshold_);
+    cfg.setIouThreshold(nmsThreshold_);
+    cfg.setModelPath(ui->modelPathEdit->text());
+    QString cfgPath = QDir::currentPath() + "/config.json";
+    cfg.saveToFile(cfgPath);
+    log(QString::fromUtf8("配置"), QString::fromUtf8("配置已保存: %1").arg(cfgPath));
+}
+
+void MainWindow::onSettings() {
+    auto& cfg = RuntimeConfig::instance();
+
+    auto* dlg = new QDialog(this);
+    dlg->setWindowTitle(QString::fromUtf8("运行时设置"));
+    dlg->setMinimumWidth(480);
+    auto* layout = new QFormLayout(dlg);
+
+    // 阈值
+    auto* confSpin = new QDoubleSpinBox(dlg);
+    confSpin->setRange(0.01, 0.99); confSpin->setSingleStep(0.05);
+    confSpin->setDecimals(2); confSpin->setValue(confThreshold_);
+    layout->addRow(QString::fromUtf8("置信度阈值:"), confSpin);
+
+    auto* nmsSpin = new QDoubleSpinBox(dlg);
+    nmsSpin->setRange(0.01, 0.99); nmsSpin->setSingleStep(0.05);
+    nmsSpin->setDecimals(2); nmsSpin->setValue(nmsThreshold_);
+    layout->addRow(QString::fromUtf8("NMS IOU阈值:"), nmsSpin);
+
+    // 端口
+    auto* wsPortSpin = new QSpinBox(dlg);
+    wsPortSpin->setRange(1024, 65535); wsPortSpin->setValue(cfg.websocketPort());
+    layout->addRow(QString::fromUtf8("WebSocket端口:"), wsPortSpin);
+
+    auto* httpPortSpin = new QSpinBox(dlg);
+    httpPortSpin->setRange(1024, 65535); httpPortSpin->setValue(cfg.httpPort());
+    layout->addRow(QString::fromUtf8("HTTP端口:"), httpPortSpin);
+
+    auto* streamPortSpin = new QSpinBox(dlg);
+    streamPortSpin->setRange(1024, 65535); streamPortSpin->setValue(cfg.streamPort());
+    layout->addRow(QString::fromUtf8("MJPEG流端口:"), streamPortSpin);
+
+    // 告警参数
+    auto* ackSpin = new QSpinBox(dlg);
+    ackSpin->setRange(1000, 60000); ackSpin->setSingleStep(1000); ackSpin->setValue(cfg.ackTimeoutMs());
+    ackSpin->setSuffix(" ms");
+    layout->addRow(QString::fromUtf8("ACK超时:"), ackSpin);
+
+    auto* cooldownSpin = new QSpinBox(dlg);
+    cooldownSpin->setRange(1000, 60000); cooldownSpin->setSingleStep(1000); cooldownSpin->setValue(cfg.alertCooldownMs());
+    cooldownSpin->setSuffix(" ms");
+    layout->addRow(QString::fromUtf8("告警冷却:"), cooldownSpin);
+
+    auto* ringSpin = new QSpinBox(dlg);
+    ringSpin->setRange(10, 300); ringSpin->setValue(cfg.ringBufferFrames());
+    layout->addRow(QString::fromUtf8("环形缓冲帧数:"), ringSpin);
+
+    // 路径
+    auto* modelEdit = new QLineEdit(cfg.modelPath(), dlg);
+    layout->addRow(QString::fromUtf8("模型路径:"), modelEdit);
+
+    auto* outputEdit = new QLineEdit(cfg.outputDir(), dlg);
+    layout->addRow(QString::fromUtf8("输出目录:"), outputEdit);
+
+    auto* recordEdit = new QLineEdit(cfg.recordDir(), dlg);
+    layout->addRow(QString::fromUtf8("录像目录:"), recordEdit);
+
+    // 按钮
+    auto* btns = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, dlg);
+    layout->addRow(btns);
+
+    connect(btns, &QDialogButtonBox::accepted, dlg, &QDialog::accept);
+    connect(btns, &QDialogButtonBox::rejected, dlg, &QDialog::reject);
+
+    if (dlg->exec() == QDialog::Accepted) {
+        // 应用设置
+        confThreshold_ = (float)confSpin->value();
+        nmsThreshold_  = (float)nmsSpin->value();
+        ui->confSlider->setValue(static_cast<int>(confThreshold_ * 100));
+        ui->nmsSlider->setValue(static_cast<int>(nmsThreshold_ * 100));
+
+        cfg.setConfThreshold(confThreshold_);
+        cfg.setIouThreshold(nmsThreshold_);
+        cfg.setWebsocketPort(wsPortSpin->value());
+        cfg.setHttpPort(httpPortSpin->value());
+        cfg.setStreamPort(streamPortSpin->value());
+        cfg.setAckTimeoutMs(ackSpin->value());
+        cfg.setAlertCooldownMs(cooldownSpin->value());
+        cfg.setRingBufferFrames(ringSpin->value());
+        cfg.setModelPath(modelEdit->text());
+        cfg.setOutputDir(outputEdit->text());
+        cfg.setRecordDir(recordEdit->text());
+
+        // 保存到JSON
+        saveRuntimeConfig();
+
+        log(QString::fromUtf8("配置"), QString::fromUtf8("运行时设置已更新(端口变更需重启生效)"));
+    }
+
+    delete dlg;
 }
 
 // ============================================================
