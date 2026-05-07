@@ -908,9 +908,8 @@ void MainWindow::stopCamera(int cameraId) {
 
     if (it->worker) it->worker->stop();
     if (it->thread) {
-        if (!it->thread->wait(3000)) {
-            it->thread->terminate();
-            it->thread->wait();
+        if (!it->thread->wait(8000)) {
+            log("系统", QString("摄像头 %1 线程未响应，强制清理").arg(cameraId));
         }
     }
 
