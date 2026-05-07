@@ -91,34 +91,70 @@ InferenceWorker::FrameResult InferenceWorker::processOneFrame(
 {
     cv::Mat processed = Preprocessor::letterbox(frame);
     std::vector<float> tensor = Preprocessor::imageToTensor(processed);
+
     std::vector<Detection> detections;
-    engine_->infer(tensor, detections, frame.cols, frame.rows, confThresh, nmsThresh);
 
-    cv::Mat displayImg = frame.clone();
-    Postprocessor::drawDetections(displayImg, detections);
+    if (useBatchInference_ && Config::BATCH_SIZE > 1) {
+        // 批量推理: 收集帧, 满batch时执行
+        batchTensors_.push_back(std::move(tensor));
+        batchImgSizes_.emplace_back(frame.cols, frame.rows);
+        batchCounter_++;
 
-    cv::Mat rgb;
-    cv::cvtColor(displayImg, rgb, cv::COLOR_BGR2RGB);
-    QImage qimg(rgb.data, rgb.cols, rgb.rows, rgb.step, QImage::Format_RGB888);
+        if (batchCounter_ >= Config::BATCH_SIZE) {
+            std::vector<std::vector<Detection>> batchDetections;
+            engine_->batchInfer(batchTensors_, batchDetections, batchImgSizes_,
+                               confThresh, nmsThresh);
+            // 取最后一帧的检测结果(当前帧)
+            if (!batchDetections.empty()) {
+                detections = std::move(batchDetections.back());
+            }
+            batchTensors_.clear();
+            batchImgSizes_.clear();
+            batchCounter_ = 0;
+        } else {
+            // 未满batch, 用上一帧的检测结果占位(或跳过)
+            // 返回空检测, 画面保持上一帧
+            FrameResult result;
+            auto displayImg = std::make_shared<cv::Mat>(frame.clone());
+            Postprocessor::drawDetections(*displayImg, detections);
+            cv::cvtColor(*displayImg, *displayImg, cv::COLOR_BGR2RGB);
+            QImage qimg(displayImg->data, displayImg->cols, displayImg->rows,
+                        displayImg->step, QImage::Format_RGB888);
+            result.image = qimg.copy();
+            result.detections = std::move(detections);
+            return result;
+        }
+    } else {
+        // 单帧推理
+        engine_->infer(tensor, detections, frame.cols, frame.rows, confThresh, nmsThresh);
+    }
 
-    // 环形缓冲区
+    // 在原始帧上绘制检测框(后续环形缓冲区/告警共享此Mat)
+    auto displayImg = std::make_shared<cv::Mat>(frame.clone());
+    Postprocessor::drawDetections(*displayImg, detections);
+
+    // 直接在displayImg上做BGR2RGB, 省掉中间Mat分配
+    cv::cvtColor(*displayImg, *displayImg, cv::COLOR_BGR2RGB);
+    QImage qimg(displayImg->data, displayImg->cols, displayImg->rows,
+                displayImg->step, QImage::Format_RGB888);
+
+    // 环形缓冲区(共享指针, 零拷贝)
     {
         std::lock_guard<std::mutex> lock(bufferMutex_);
-        frameBuffer_.push_back(displayImg.clone());
+        frameBuffer_.push_back(displayImg);
         if (frameBuffer_.size() > Config::RING_BUFFER_FRAMES) {
             frameBuffer_.pop_front();
         }
     }
 
-    // 告警检测
-    checkAlert(detections, displayImg.clone());
+    // 告警检测(传共享指针)
+    checkAlert(detections, displayImg);
 
-    // 告警录制后续帧
+    // 告警录制后续帧(共享指针, 零拷贝)
     if (alertRecording_ && alertRemainingFrames_ > 0) {
-        alertBuffer_.push_back(displayImg.clone());
+        alertBuffer_.push_back(displayImg);
         alertRemainingFrames_--;
         if (alertRemainingFrames_ == 0) {
-            // 录制完成，保存文件
             saveAlertFiles(QUuid::createUuid().toString(QUuid::WithoutBraces),
                           pendingAlarmType_);
             alertRecording_ = false;
@@ -128,13 +164,13 @@ InferenceWorker::FrameResult InferenceWorker::processOneFrame(
     }
 
     FrameResult result;
-    result.image = qimg.copy();
+    result.image = qimg.copy();  // 必须copy: displayImg是共享的, RGB数据会被后续帧覆盖
     result.detections = std::move(detections);
     return result;
 }
 
 void InferenceWorker::checkAlert(
-    const std::vector<Detection>& detections, const cv::Mat& annotatedFrame)
+    const std::vector<Detection>& detections, const std::shared_ptr<cv::Mat>& annotatedFrame)
 {
     for (const auto& det : detections) {
         const auto& name = Config::CLASS_NAMES[det.class_id];
@@ -156,7 +192,7 @@ void InferenceWorker::checkAlert(
 
         {
             std::lock_guard<std::mutex> lock(bufferMutex_);
-            alertBuffer_ = frameBuffer_;
+            alertBuffer_ = frameBuffer_;  // 共享指针拷贝, 引用计数+1, 零内存拷贝
         }
         alertBuffer_.push_back(annotatedFrame);
 
@@ -167,8 +203,15 @@ void InferenceWorker::checkAlert(
 void InferenceWorker::saveAlertFiles(const QString& alarmId, const QString& alarmType) {
     if (alertBuffer_.empty()) return;
 
-    int frameW = alertBuffer_.back().cols;
-    int frameH = alertBuffer_.back().rows;
+    // 告警视频需要BGR格式, 但环形缓冲区已转为RGB, 需要转回BGR保存
+    auto toBgr = [](const std::shared_ptr<cv::Mat>& rgbFrame) -> cv::Mat {
+        cv::Mat bgr;
+        cv::cvtColor(*rgbFrame, bgr, cv::COLOR_RGB2BGR);
+        return bgr;
+    };
+
+    int frameW = alertBuffer_.back()->cols;
+    int frameH = alertBuffer_.back()->rows;
     if (frameW <= 0 || frameH <= 0) return;
 
     // 文件名: alarm_<alarmId>_<type>
@@ -176,29 +219,30 @@ void InferenceWorker::saveAlertFiles(const QString& alarmId, const QString& alar
     QString videoPath = outputDir_ + "/" + baseName + ".mp4";
     QString imagePath = outputDir_ + "/" + baseName + ".jpg";
 
-    // 保存视频(MP4)
+    // 保存视频(MP4) - 需要BGR格式
     int fourcc = cv::VideoWriter::fourcc('m', 'p', '4', 'v');
     cv::VideoWriter writer(videoPath.toStdString(), fourcc, 30.0,
                            cv::Size(frameW, frameH));
     if (writer.isOpened()) {
         for (auto& f : alertBuffer_) {
-            writer.write(f);
+            writer.write(toBgr(f));
         }
         writer.release();
     }
 
-    // 保存截图(第一帧)
-    cv::imwrite(imagePath.toStdString(), alertBuffer_.front());
+    // 保存截图(第一帧) - 需要BGR格式
+    cv::imwrite(imagePath.toStdString(), toBgr(alertBuffer_.front()));
 
-    // 构造告警 JSON
+    // 构造告警 JSON (使用自动获取的本机IP)
+    QString hostIp = MainWindow::getHostIp();
     QJsonObject data;
     data["alarm_id"]   = alarmId;
     data["alarm_type"] = alarmType;
     data["timestamp"]  = QDateTime::currentDateTime().toMSecsSinceEpoch();
     data["video_url"]  = QString("http://%1:%2/%3").arg(
-        QString::fromStdString(Config::HOST_IP)).arg(Config::HTTP_PORT).arg(baseName + ".mp4");
+        hostIp).arg(Config::HTTP_PORT).arg(baseName + ".mp4");
     data["image_url"]  = QString("http://%1:%2/%3").arg(
-        QString::fromStdString(Config::HOST_IP)).arg(Config::HTTP_PORT).arg(baseName + ".jpg");
+        hostIp).arg(Config::HTTP_PORT).arg(baseName + ".jpg");
 
     QJsonObject root;
     root["type"] = "alarm";
@@ -315,7 +359,7 @@ void MainWindow::startWebSocketServer() {
     connect(wsServer_, &QWebSocketServer::newConnection, this, &MainWindow::onWsClientConnected);
 
     QString wsAddr = QString("ws://%1:%2")
-        .arg(QString::fromStdString(Config::HOST_IP))
+        .arg(getHostIp())
         .arg(Config::WEBSOCKET_PORT);
     wsAddressLabel_->setText("WebSocket: " + wsAddr);
     log("WebSocket", QString("服务已启动 %1").arg(wsAddr));
@@ -342,7 +386,15 @@ void MainWindow::startHttpFileServer() {
         if (!socket) return;
 
         connect(socket, &QTcpSocket::readyRead, this, [socket, outputPath]() {
-            QString request = QString::fromUtf8(socket->readAll());
+            // 等待完整的HTTP请求(检查是否以\r\n\r\n结尾)
+            if (!socket->canReadLine()) return;
+            QByteArray requestData = socket->readAll();
+            // 检查请求头是否完整(HTTP头以\r\n\r\n结束)
+            if (!requestData.contains("\r\n\r\n")) {
+                // 请求头不完整, 等待更多数据
+                if (socket->state() == QAbstractSocket::ConnectedState) return;
+            }
+            QString request = QString::fromUtf8(requestData);
             // 解析 GET /filename.ext HTTP/1.1
             QStringList lines = request.split("\r\n");
             if (lines.isEmpty()) { socket->close(); delete socket; return; }
@@ -397,7 +449,7 @@ void MainWindow::startHttpFileServer() {
 
     statusMessageLabel_->setText(
         QString("HTTP 文件服务已启动: http://%1:%2")
-            .arg(QString::fromStdString(Config::HOST_IP))
+            .arg(getHostIp())
             .arg(Config::HTTP_PORT));
 }
 
@@ -445,13 +497,24 @@ void MainWindow::retryAlarm(const QString& alarmId) {
     auto it = pendingAlarms_.find(alarmId);
     if (it == pendingAlarms_.end()) return;
 
+    // 超过最大重试次数, 停止重试并清理
+    if (++it->retryCount >= MAX_RETRY_COUNT) {
+        if (it->retryTimer) {
+            it->retryTimer->stop();
+            delete it->retryTimer;
+        }
+        pendingAlarms_.erase(it);
+        log("告警", QString("告警 %1 重试超限, 已放弃").arg(alarmId.left(8)));
+        return;
+    }
+
     // 重发给所有连接的客户端
     for (auto* client : wsClients_) {
         client->sendTextMessage(it->jsonMessage);
     }
     statusMessageLabel_->setText(
-        QString("重发告警 %1").arg(alarmId.left(8)));
-    log("告警", QString("重发告警: %1").arg(alarmId.left(8)));
+        QString("重发告警 %1 (%2/%3)").arg(alarmId.left(8)).arg(it->retryCount).arg(MAX_RETRY_COUNT));
+    log("告警", QString("重发告警: %1 (%2/%3)").arg(alarmId.left(8)).arg(it->retryCount).arg(MAX_RETRY_COUNT));
 }
 
 // ============================================================
@@ -469,7 +532,7 @@ void MainWindow::onAlertSaved(const QString& videoPath, const QString& imagePath
         client->sendTextMessage(alertJson);
     }
 
-    // 启动 ACK 等待定时器
+    // 启动 ACK 等待定时器(有最大重试次数)
     auto* timer = new QTimer(this);
     timer->setSingleShot(false);
     connect(timer, &QTimer::timeout, this, [this, alarmId]() {
@@ -479,6 +542,7 @@ void MainWindow::onAlertSaved(const QString& videoPath, const QString& imagePath
     PendingAlarm pending;
     pending.jsonMessage = alertJson;
     pending.retryTimer = timer;
+    pending.retryCount = 0;
     pendingAlarms_[alarmId] = pending;
 
     timer->start(Config::ACK_TIMEOUT_MS);
@@ -608,6 +672,7 @@ void MainWindow::onOpenVideo() {
     connect(worker_, &InferenceWorker::finished, this, &MainWindow::onWorkerFinished);
     connect(worker_, &InferenceWorker::errorOccurred, this, &MainWindow::onWorkerError);
     connect(workerThread_, &QThread::started, worker_, [this, filePath]() {
+        worker_->setBatchInference(ui->batchInferenceCheck->isChecked());
         worker_->processVideo(filePath, confThreshold_, nmsThreshold_);
     });
     connect(workerThread_, &QThread::finished, worker_, &QObject::deleteLater);
@@ -633,6 +698,7 @@ void MainWindow::onOpenCamera() {
     connect(worker_, &InferenceWorker::finished, this, &MainWindow::onWorkerFinished);
     connect(worker_, &InferenceWorker::errorOccurred, this, &MainWindow::onWorkerError);
     connect(workerThread_, &QThread::started, worker_, [this]() {
+        worker_->setBatchInference(ui->batchInferenceCheck->isChecked());
         worker_->processCamera(confThreshold_, nmsThreshold_);
     });
     connect(workerThread_, &QThread::finished, worker_, &QObject::deleteLater);
@@ -697,9 +763,9 @@ void MainWindow::safeStopWorker() {
     // 先标记停止，让工作线程退出循环
     worker_->stop();
 
-    // 等待线程正常退出（不给quit，因为worker自己会emit finished退出事件循环）
+    // 等待线程正常退出
     if (!workerThread_->wait(5000)) {
-        // 超时强杀，摄像头可能未释放，但避免死锁
+        // 超时强杀
         workerThread_->terminate();
         workerThread_->wait();
     }
@@ -712,6 +778,13 @@ void MainWindow::safeStopWorker() {
     worker_ = nullptr;
     workerThread_ = nullptr;
     isProcessing_ = false;
+
+    // 强制释放可能残留的摄像头资源(terminate后VideoCapture析构可能未执行)
+    cv::VideoCapture forceRelease(0, cv::CAP_DSHOW);
+    if (forceRelease.isOpened()) {
+        forceRelease.release();
+    }
+
     enableControls(true);
     ui->stopBtn->setEnabled(false);
     fpsLabel_->setText("FPS: --");
@@ -877,15 +950,20 @@ void MainWindow::closeEvent(QCloseEvent* event) {
 // 批量推理开关
 // ============================================================
 void MainWindow::onBatchInferenceToggled(bool checked) {
-    // 注意: 批量推理配置在编译时固定, 此处仅提示用户
     if (checked) {
-        statusMessageLabel_->setText("批量推理已启用 (batch=4, 需重新编译生效)");
-        log("配置", "批量推理已启用 (batch=4)");
+        if (Config::BATCH_SIZE <= 1) {
+            ui->batchInferenceCheck->setChecked(false);
+            log("配置", "当前BATCH_SIZE=1, 无法启用批量推理");
+            return;
+        }
+        if (worker_) worker_->setBatchInference(true);
+        statusMessageLabel_->setText(QString("批量推理已启用 (batch=%1)").arg(Config::BATCH_SIZE));
+        log("配置", QString("批量推理已启用 (batch=%1)").arg(Config::BATCH_SIZE));
     } else {
-        statusMessageLabel_->setText("批量推理已禁用 (需重新编译生效)");
+        if (worker_) worker_->setBatchInference(false);
+        statusMessageLabel_->setText("批量推理已禁用, 使用单帧推理");
         log("配置", "批量推理已禁用");
     }
-    qDebug() << "Batch inference toggled:" << checked;
 }
 
 // ============================================================
@@ -903,4 +981,25 @@ void MainWindow::log(const QString& category, const QString& message) {
     QTextCursor cursor = ui->logTextEdit->textCursor();
     cursor.movePosition(QTextCursor::End);
     ui->logTextEdit->setTextCursor(cursor);
+}
+
+// ============================================================
+// 工具方法
+// ============================================================
+QString MainWindow::getHostIp() {
+    // 优先获取非回环的IPv4地址
+    const auto interfaces = QNetworkInterface::allInterfaces();
+    for (const auto& iface : interfaces) {
+        if (iface.flags() & QNetworkInterface::IsLoopBack) continue;
+        if (!(iface.flags() & QNetworkInterface::IsUp)) continue;
+        if (!(iface.flags() & QNetworkInterface::IsRunning)) continue;
+        for (const auto& addr : iface.addressEntries()) {
+            if (addr.ip().protocol() == QAbstractSocket::IPv4Protocol &&
+                addr.ip() != QHostAddress::LocalHost) {
+                return addr.ip().toString();
+            }
+        }
+    }
+    // 回退到配置文件中的IP
+    return QString::fromStdString(Config::HOST_IP);
 }

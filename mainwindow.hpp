@@ -19,6 +19,7 @@
 #include <deque>
 #include <unordered_map>
 #include <mutex>
+#include <memory>
 
 #include <opencv2/opencv.hpp>
 
@@ -45,6 +46,7 @@ public slots:
     void processVideo(const QString& path, float confThresh, float nmsThresh);
     void processCamera(float confThresh, float nmsThresh);
     void stop();
+    void setBatchInference(bool enabled) { useBatchInference_ = enabled; }
 
 signals:
     void frameProcessed(QImage image, std::vector<Detection> detections, double elapsedMs);
@@ -60,15 +62,21 @@ private:
     };
 
     FrameResult processOneFrame(const cv::Mat& frame, float confThresh, float nmsThresh);
-    void checkAlert(const std::vector<Detection>& detections, const cv::Mat& annotatedFrame);
+    void checkAlert(const std::vector<Detection>& detections, const std::shared_ptr<cv::Mat>& annotatedFrame);
     void saveAlertFiles(const QString& alarmId, const QString& alarmType);
 
     YoloTrtEngine* engine_;
     std::atomic<bool> running_{false};
 
-    // 环形缓冲区
+    // 批量推理状态
+    std::atomic<bool> useBatchInference_{false};
+    std::vector<std::vector<float>> batchTensors_;
+    std::vector<std::pair<int,int>> batchImgSizes_;
+    int batchCounter_ = 0;
+
+    // 环形缓冲区(共享指针避免深拷贝)
     std::mutex bufferMutex_;
-    std::deque<cv::Mat> frameBuffer_;
+    std::deque<std::shared_ptr<cv::Mat>> frameBuffer_;
 
     // 告警冷却
     std::unordered_map<int, std::chrono::steady_clock::time_point> lastAlertTime_;
@@ -76,7 +84,7 @@ private:
     // 告警录制状态
     std::atomic<bool> alertRecording_{false};
     int alertRemainingFrames_ = 0;
-    std::deque<cv::Mat> alertBuffer_;
+    std::deque<std::shared_ptr<cv::Mat>> alertBuffer_;
     QString pendingAlarmType_;
 
     // 告警输出目录
@@ -93,6 +101,8 @@ class MainWindow : public QMainWindow {
 public:
     explicit MainWindow(QWidget *parent = nullptr);
     ~MainWindow() override;
+
+    static QString getHostIp();
 
 private slots:
     void onOpenImage();
@@ -145,12 +155,15 @@ private:
     QList<QWebSocket*> wsClients_;
     QTcpServer* httpServer_ = nullptr;
 
-    // 待确认的告警: alarm_id → {json消息, 重试定时器}
+    // 待确认的告警: alarm_id → {json消息, 重试定时器, 重试次数}
     struct PendingAlarm {
         QString jsonMessage;
         QTimer* retryTimer = nullptr;
+        int retryCount = 0;
     };
     QMap<QString, PendingAlarm> pendingAlarms_;
+
+    static constexpr int MAX_RETRY_COUNT = 10;  // 最大重试次数
 
     bool isProcessing_ = false;
     float confThreshold_;

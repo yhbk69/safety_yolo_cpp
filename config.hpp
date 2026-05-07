@@ -60,7 +60,7 @@ namespace Config {
     // WebSocket 服务端口
     constexpr int WEBSOCKET_PORT = 9090;
 
-    // 本机 IP(告警 JSON 中 video_url/image_url 使用)
+    // 本机 IP(仅作为自动获取失败时的回退值, 运行时优先自动获取)
     const std::string HOST_IP = "192.168.124.28";
 
     // HTTP 文件服务端口(用于 URL 构造)

@@ -93,12 +93,17 @@ public:
     }
 
     // 批量推理: 输入batch*N, 输出每个frame的detections
+    // 注意: engine必须以对应BATCH_SIZE构建, 否则推理结果不正确
     void batchInfer(const std::vector<std::vector<float>>& inputs, std::vector<std::vector<Detection>>& detectionsList,
                   const std::vector<std::pair<int,int>>& imgSizes,
                   float confThreshold = Config::CONF_THRESHOLD,
                   float iouThreshold = Config::IOU_THRESHOLD) {
         const int batchSize = static_cast<int>(inputs.size());
         if (batchSize == 0) return;
+        if (batchSize > Config::BATCH_SIZE) {
+            throw std::runtime_error("[Engine] Batch size " + std::to_string(batchSize) +
+                " exceeds configured maximum " + std::to_string(Config::BATCH_SIZE));
+        }
 
         // 一次性拷贝整个batch到GPU
         size_t batchInputSize = inputs[0].size() * batchSize;
@@ -111,7 +116,6 @@ public:
                     batchInputSize * sizeof(float), cudaMemcpyHostToDevice, stream_));
         CUDA_CHECK(cudaStreamSynchronize(stream_));
 
-        // 批量执行
         context_->executeV2(gpuBuffers_);
 
         std::vector<float> output(getOutputSize() * batchSize);
@@ -161,8 +165,9 @@ private:
     }
 
     void allocateGpuBuffers() {
-        CUDA_CHECK(cudaMalloc(&gpuInputBuffer_,  getInputSize()  * sizeof(float)));
-        CUDA_CHECK(cudaMalloc(&gpuOutputBuffer_, getOutputSize() * sizeof(float)));
+        // 按最大批次分配GPU内存, 避免batchInfer时越界写显存
+        CUDA_CHECK(cudaMalloc(&gpuInputBuffer_,  getInputSize()  * Config::BATCH_SIZE * sizeof(float)));
+        CUDA_CHECK(cudaMalloc(&gpuOutputBuffer_, getOutputSize() * Config::BATCH_SIZE * sizeof(float)));
         gpuBuffers_[0] = gpuInputBuffer_;
         gpuBuffers_[1] = gpuOutputBuffer_;
     }
