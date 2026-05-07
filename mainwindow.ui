@@ -341,6 +341,60 @@ QListWidget::item { padding: 8px; }</string>
         </property>
        </widget>
       </item>
+      <item>
+       <widget class="QPushButton" name="startRecordBtn">
+        <property name="text">
+         <string>开始录制</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QPushButton" name="stopRecordBtn">
+        <property name="enabled">
+         <bool>false</bool>
+        </property>
+        <property name="text">
+         <string>停止录制</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QPushButton" name="viewRecordBtn">
+        <property name="text">
+         <string>查看录像</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QSpinBox" name="recordDaysSpin">
+        <property name="toolTip">
+         <string>录像保存天数</string>
+        </property>
+        <property name="minimum">
+         <number>1</number>
+        </property>
+        <property name="maximum">
+         <number>365</number>
+        </property>
+        <property name="value">
+         <number>7</number>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QLabel" name="recordDaysLabel">
+        <property name="text">
+         <string>天</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QPushButton" name="clearRecordBtn">
+        <property name="text">
+         <string>清理旧录像</string>
+        </property>
+       </widget>
+      </item>
      </layout>
     </item>
     <item>

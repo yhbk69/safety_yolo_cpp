@@ -20,6 +20,8 @@
 #include <QFile>
 #include <QInputDialog>
 #include <QBuffer>
+#include <QDialog>
+#include <QDialogButtonBox>
 
 #include <chrono>
 #include <filesystem>
@@ -321,11 +323,22 @@ void MainWindow::startMjpegServer() {
     });
     log(QString::fromUtf8("MJPEG"),
         QString::fromUtf8("服务已启动: http://%1:%2/stream")
-            .arg(getHostIp()).arg(cfg.streamPort()));
+            .arg(QString::fromStdString(Config::HOST_IP)).arg(cfg.streamPort()));
 }
 
 void MainWindow::pushMjpegFrame(const QByteArray& jpegData) {
     if (mjpegClients_.isEmpty()) return;
+
+    // MJPEG推帧频率控制在约30fps (每帧间隔33ms)
+    static auto lastFrameTime = std::chrono::steady_clock::now();
+    auto now = std::chrono::steady_clock::now();
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastFrameTime).count();
+
+    // 如果距离上一帧不足33ms，跳过此帧
+    if (elapsed < 33) return;
+
+    lastFrameTime = now;
+
     QByteArray chunk = QByteArray("--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ")
         + QByteArray::number(jpegData.size()) + QByteArray("\r\n\r\n")
         + jpegData + QByteArray("\r\n");
@@ -426,6 +439,11 @@ void MainWindow::setupConnections() {
         ui->logTextEdit->clear();
         log("系统", "日志已清空");
     });
+    // 录制按钮
+    connect(ui->startRecordBtn, &QPushButton::clicked, this, &MainWindow::onStartRecording);
+    connect(ui->stopRecordBtn, &QPushButton::clicked, this, &MainWindow::onStopRecording);
+    connect(ui->viewRecordBtn, &QPushButton::clicked, this, &MainWindow::onViewRecordings);
+    connect(ui->clearRecordBtn, &QPushButton::clicked, this, &MainWindow::onClearOldRecordings);
     connect(ui->actionOpenImage, &QAction::triggered, this, &MainWindow::onOpenImage);
     connect(ui->actionOpenVideo, &QAction::triggered, this, &MainWindow::onOpenVideo);
     connect(ui->actionOpenCamera, &QAction::triggered, this, [this]() {
@@ -449,7 +467,8 @@ void MainWindow::startWebSocketServer() {
     connect(wsServer_, &QWebSocketServer::newConnection, this, &MainWindow::onWsClientConnected);
 
     QString wsAddr = QString("ws://%1:%2")
-        .arg(getHostIp())
+    //    .arg(getHostIp())
+        .arg(QString::fromStdString(Config::HOST_IP))
         .arg(Config::WEBSOCKET_PORT);
     wsAddressLabel_->setText("WebSocket: " + wsAddr);
     log("WebSocket", QString("服务已启动 %1").arg(wsAddr));
@@ -539,7 +558,7 @@ void MainWindow::startHttpFileServer() {
 
     statusMessageLabel_->setText(
         QString("HTTP 文件服务已启动: http://%1:%2")
-            .arg(getHostIp())
+            .arg(QString::fromStdString(Config::HOST_IP))
             .arg(Config::HTTP_PORT));
 }
 
@@ -564,7 +583,52 @@ void MainWindow::onWsTextMessage(const QString& message) {
     if (doc.isNull()) return;
 
     QJsonObject obj = doc.object();
-    if (obj["type"].toString() != "ack") return;
+    QString type = obj["type"].toString();
+
+    // 处理 ping 心跳
+    if (type == "ping") {
+        QJsonObject pong;
+        pong["type"] = "pong";
+        QJsonDocument pongDoc(pong);
+
+        // 获取发送消息的客户端
+        auto* client = qobject_cast<QWebSocket*>(sender());
+        if (client) {
+            client->sendTextMessage(pongDoc.toJson(QJsonDocument::Compact));
+        }
+        return;
+    }
+
+    // 处理 sync_request 同步请求
+    if (type == "sync_request") {
+        QString lastAlarmId = obj["last_alarm_id"].toString();
+        handleSyncRequest(lastAlarmId);
+        return;
+    }
+
+    // 处理 get_streams 获取摄像头列表
+    if (type == "get_streams") {
+        handleGetStreams();
+        return;
+    }
+
+    // 处理 set_fence 围栏设置
+    if (type == "set_fence") {
+        QString streamId = obj["stream_id"].toString();
+        QJsonObject fence = obj["fence"].toObject();
+        handleSetFence(streamId, fence);
+        return;
+    }
+
+    // 处理 view_stream 查看实时视频
+    if (type == "view_stream") {
+        QString streamId = obj["stream_id"].toString();
+        handleViewStream(streamId);
+        return;
+    }
+
+    // 处理 ack 告警确认
+    if (type != "ack") return;
 
     QString alarmId = obj["alarm_id"].toString();
     if (alarmId.isEmpty()) return;
@@ -605,6 +669,151 @@ void MainWindow::retryAlarm(const QString& alarmId) {
     statusMessageLabel_->setText(
         QString("重发告警 %1 (%2/%3)").arg(alarmId.left(8)).arg(it->retryCount).arg(MAX_RETRY_COUNT));
     log("告警", QString("重发告警: %1 (%2/%3)").arg(alarmId.left(8)).arg(it->retryCount).arg(MAX_RETRY_COUNT));
+}
+
+// ============================================================
+// WebSocket 消息处理 - 同步请求
+// ============================================================
+void MainWindow::handleSyncRequest(const QString& lastAlarmId) {
+    log("WebSocket", QString("收到同步请求, last_alarm_id: %1").arg(lastAlarmId));
+
+    // 找出 last_alarm_id 之后且未确认的告警，逐条推送
+    bool foundLast = lastAlarmId.isEmpty();  // 如果为空，推送所有
+
+    // 遍历所有待确认的告警
+    for (auto it = pendingAlarms_.begin(); it != pendingAlarms_.end(); ++it) {
+        const QString& alarmId = it.key();
+
+        // 如果找到了 last_alarm_id，从这里之后开始推送
+        if (!foundLast && alarmId == lastAlarmId) {
+            foundLast = true;
+            continue;  // 跳过 last_alarm_id 本身
+        }
+
+        // 推送 last_alarm_id 之后的告警
+        if (foundLast) {
+            for (auto* client : wsClients_) {
+                client->sendTextMessage(it->jsonMessage);
+            }
+            log("WebSocket", QString("同步推送告警: %1").arg(alarmId.left(8)));
+        }
+    }
+
+    if (lastAlarmId.isEmpty()) {
+        log("WebSocket", "同步完成: 推送所有待确认告警");
+    } else {
+        log("WebSocket", QString("同步完成: last_alarm_id=%1").arg(lastAlarmId.left(8)));
+    }
+}
+
+// ============================================================
+// WebSocket 消息处理 - 获取摄像头列表
+// ============================================================
+void MainWindow::handleGetStreams() {
+    QJsonArray streamsArray;
+
+    // 遍历所有活跃的摄像头worker
+    for (auto it = cameraWorkers_.begin(); it != cameraWorkers_.end(); ++it) {
+        int camId = it.key();
+        const auto& worker = it.value();
+
+        QJsonObject stream;
+        stream["stream_id"] = QString::number(camId);
+        stream["name"] = worker.worker ? worker.worker->cameraName() : QString("摄像头%1").arg(camId);
+        // URL 使用MJPEG流地址
+        stream["url"] = QString("http://%1:%2/stream")
+            .arg(QString::fromStdString(Config::HOST_IP))
+            .arg(RuntimeConfig::instance().streamPort());
+
+        streamsArray.append(stream);
+    }
+
+    QJsonObject response;
+    response["type"] = "streams_list";
+    response["data"] = streamsArray;
+
+    QJsonDocument doc(response);
+    QString jsonStr = doc.toJson(QJsonDocument::Compact);
+
+    // 发送给请求的客户端
+    auto* client = qobject_cast<QWebSocket*>(sender());
+    if (client) {
+        client->sendTextMessage(jsonStr);
+    }
+
+    log("WebSocket", QString("响应摄像头列表: %1 个流").arg(streamsArray.size()));
+}
+
+// ============================================================
+// WebSocket 消息处理 - 设置围栏
+// ============================================================
+void MainWindow::handleSetFence(const QString& streamId, const QJsonObject& fence) {
+    float x1 = fence["x1"].toDouble(0.0);
+    float y1 = fence["y1"].toDouble(0.0);
+    float x2 = fence["x2"].toDouble(1.0);
+    float y2 = fence["y2"].toDouble(1.0);
+
+    FenceRegion region;
+    region.x1 = x1;
+    region.y1 = y1;
+    region.x2 = x2;
+    region.y2 = y2;
+
+    fenceRegions_[streamId] = region;
+
+    log("WebSocket", QString("设置围栏: stream_id=%1, 区域=(%.2f,%.2f,%.2f,%.2f)")
+        .arg(streamId).arg(x1).arg(y1).arg(x2).arg(y2));
+
+    // 响应确认
+    QJsonObject response;
+    response["type"] = "fence_set";
+    response["stream_id"] = streamId;
+    response["status"] = "success";
+
+    QJsonDocument doc(response);
+    auto* client = qobject_cast<QWebSocket*>(sender());
+    if (client) {
+        client->sendTextMessage(doc.toJson(QJsonDocument::Compact));
+    }
+}
+
+// ============================================================
+// WebSocket 消息处理 - 查看实时视频流
+// ============================================================
+void MainWindow::handleViewStream(const QString& streamId) {
+    // 检查摄像头是否存在
+    int camId = streamId.toInt();
+    auto it = cameraWorkers_.find(camId);
+    if (it == cameraWorkers_.end()) {
+        QJsonObject error;
+        error["type"] = "stream_error";
+        error["stream_id"] = streamId;
+        error["message"] = "摄像头不存在";
+        
+        auto* client = qobject_cast<QWebSocket*>(sender());
+        if (client) {
+            client->sendTextMessage(QJsonDocument(error).toJson(QJsonDocument::Compact));
+        }
+        return;
+    }
+
+    // 返回MJPEG流URL
+    QString streamUrl = QString("http://%1:%2/stream")
+        .arg(QString::fromStdString(Config::HOST_IP))
+        .arg(RuntimeConfig::instance().streamPort());
+
+    QJsonObject response;
+    response["type"] = "stream_url";
+    response["stream_id"] = streamId;
+    response["url"] = streamUrl;
+    response["message"] = "请在浏览器中打开此URL查看实时视频";
+
+    auto* client = qobject_cast<QWebSocket*>(sender());
+    if (client) {
+        client->sendTextMessage(QJsonDocument(response).toJson(QJsonDocument::Compact));
+    }
+
+    log("WebSocket", QString("请求查看摄像头%1的实时视频").arg(streamId));
 }
 
 // ============================================================
@@ -852,7 +1061,17 @@ void MainWindow::onOpenCamera(bool checked) {
         CameraWorker cw{thread, worker, nullptr};
         cameraWorkers_[0] = cw;
         thread->start();
+
+        // 自动开始录制
+        QTimer::singleShot(500, this, [this]() {
+            onStartRecording();
+        });
     } else {
+        // 停止录制（如果正在录制）
+        auto recIt = cameraRecordings_.find(0);
+        if (recIt != cameraRecordings_.end() && recIt.value()->isRecording) {
+            onStopRecording();
+        }
         stopCamera(0);
     }
 }
@@ -899,6 +1118,12 @@ void MainWindow::onAddCamera() {
     ui->cameraStatusLabel->setStyleSheet("font-size: 20px; font-weight: bold; padding: 0 12px; color: green;");
     ui->cameraStatusLabel->setText(QString::fromUtf8("● %1路运行").arg(cameraWorkers_.size()));
     ui->stopBtn->setEnabled(true);
+
+    // 自动开始录制
+    QTimer::singleShot(500, this, [this, camId]() {
+        activeDisplayCamera_ = camId;
+        onStartRecording();
+    });
 }
 
 void MainWindow::onRemoveCamera(int cameraId) {
@@ -911,9 +1136,17 @@ void MainWindow::stopCamera(int cameraId) {
 
     log("系统", QString("正在停止摄像头 %1...").arg(cameraId));
 
+    // 0. 如果该摄像头正在录制，先停止录制
+    auto recIt = cameraRecordings_.find(cameraId);
+    if (recIt != cameraRecordings_.end() && recIt.value()->isRecording) {
+        log("录像", QString("摄像头%1正在录制，自动停止录制").arg(cameraId));
+        activeDisplayCamera_ = cameraId;
+        onStopRecording();
+    }
+
     // 1. 设置停止标志
     if (it->worker) it->worker->stop();
-    
+
     // 2. 等待线程退出（缩短超时时间到2秒）
     if (it->thread) {
         if (!it->thread->wait(2000)) {
@@ -1014,6 +1247,23 @@ void MainWindow::onStopProcessing() {
 }
 
 void MainWindow::onFrameProcessed(int cameraId, QImage image, std::vector<Detection> detections, double elapsedMs) {
+    // 录像: 写帧到录像文件
+    auto recIt = cameraRecordings_.find(cameraId);
+    if (recIt != cameraRecordings_.end()) {
+        CameraRecording* rec = recIt.value();
+        if (rec && rec->isRecording && rec->writer && rec->writer->isOpened()) {
+            // QImage 转 cv::Mat
+            QImage convImg = image.convertToFormat(QImage::Format_RGB888);
+            cv::Mat mat(convImg.height(), convImg.width(), CV_8UC3, const_cast<uchar*>(convImg.constBits()), convImg.bytesPerLine());
+            cv::Mat bgr;
+            cv::cvtColor(mat, bgr, cv::COLOR_RGB2BGR);
+            // 缩放到1080p
+            cv::Mat resized;
+            cv::resize(bgr, resized, cv::Size(1920, 1080));
+            rec->writer->write(resized);
+        }
+    }
+
     // MJPEG推流: 每帧都推
     QByteArray jpegData;
     {
@@ -1187,8 +1437,186 @@ void MainWindow::enableControls(bool enabled) {
 
 void MainWindow::closeEvent(QCloseEvent* event) {
     stopAllCameras();
+    // 停止所有录像
+    for (auto it = cameraRecordings_.begin(); it != cameraRecordings_.end(); ++it) {
+        auto rec = it.value();
+        if (rec && rec->isRecording && rec->writer && rec->writer->isOpened()) {
+            rec->writer->release();
+        }
+        delete rec->writer;
+    }
+    cameraRecordings_.clear();
     if (isProcessing_) isProcessing_ = false;
     event->accept();
+}
+
+// ============================================================
+// 视频录制功能
+// ============================================================
+QString MainWindow::getRecordDir(int cameraId) {
+    QString baseDir = QDir::cleanPath(QDir::currentPath() + "/" + QString::fromStdString(Config::RECORD_DIR));
+    QDateTime now = QDateTime::currentDateTime();
+    QString dateDir = now.toString("yyyyMMdd");
+    QString cameraDir = QString("camera_%1").arg(cameraId);
+    QString fullPath = baseDir + "/" + dateDir + "/" + cameraDir;
+    QDir().mkpath(fullPath);
+    return fullPath;
+}
+
+void MainWindow::onStartRecording() {
+    int cameraId = activeDisplayCamera_;
+    if (cameraId < 0) {
+        QMessageBox::warning(this, QString::fromUtf8("录像"), QString::fromUtf8("请先打开一个摄像头"));
+        return;
+    }
+
+    // 检查是否已在录制
+    auto it = cameraRecordings_.find(cameraId);
+    if (it != cameraRecordings_.end() && it.value()->isRecording) {
+        QMessageBox::information(this, QString::fromUtf8("录像"), QString::fromUtf8("该摄像头已在录制中"));
+        return;
+    }
+
+    // 创建录像目录: 年月日/摄像头ID/
+    QString recordDir = getRecordDir(cameraId);
+    QDateTime now = QDateTime::currentDateTime();
+    QString startTimeStr = now.toString("HHmmss");
+    
+    // 使用起止时间命名: 开始时间-结束时间.mp4 (结束时重命名)
+    QString videoPath = recordDir + "/" + startTimeStr + ".mp4";
+
+    // 从活跃摄像头获取帧尺寸
+    auto camIt = cameraWorkers_.find(cameraId);
+    int width = 1920, height = 1080;
+    if (camIt != cameraWorkers_.end() && camIt->worker) {
+        // 尝试从摄像头获取实际尺寸，这里使用默认值
+        // 实际尺寸会在第一次写帧时自动调整
+    }
+
+    // 创建 VideoWriter
+    cv::VideoWriter* writer = new cv::VideoWriter(
+        videoPath.toStdString(),
+        cv::VideoWriter::fourcc('m','p','4','v'),
+        25.0,  // FPS
+        cv::Size(width, height)
+    );
+
+    if (!writer->isOpened()) {
+        QMessageBox::critical(this, QString::fromUtf8("录像"), QString::fromUtf8("无法创建录像文件: ") + videoPath);
+        delete writer;
+        return;
+    }
+
+    // 保存录制信息
+    CameraRecording* rec = new CameraRecording();
+    rec->cameraId = cameraId;
+    rec->videoPath = videoPath;
+    rec->writer = writer;
+    rec->isRecording = true;
+    rec->startTime = now;
+    cameraRecordings_[cameraId] = rec;
+
+    ui->startRecordBtn->setEnabled(false);
+    ui->stopRecordBtn->setEnabled(true);
+
+    log(QString::fromUtf8("录像"), QString::fromUtf8("开始录制: %1 (摄像头%2)").arg(videoPath).arg(cameraId));
+}
+
+void MainWindow::onStopRecording() {
+    int cameraId = activeDisplayCamera_;
+    auto it = cameraRecordings_.find(cameraId);
+    if (it == cameraRecordings_.end() || !it.value()->isRecording) {
+        QMessageBox::warning(this, QString::fromUtf8("录像"), QString::fromUtf8("当前没有正在录制的摄像头"));
+        return;
+    }
+
+    auto rec = it.value();
+    // 停止录制
+    if (rec->writer && rec->writer->isOpened()) {
+        rec->writer->release();
+    }
+    delete rec->writer;
+    rec->writer = nullptr;
+    rec->isRecording = false;
+
+    QDateTime now = QDateTime::currentDateTime();
+    QString startTimeStr = rec->startTime.toString("HHmmss");
+    QString endTimeStr = now.toString("HHmmss");
+    QString videoPath = rec->videoPath;
+
+    // 重命名为带起止时间的文件名: 开始时间-结束时间.mp4
+    QString newPath = videoPath;
+    newPath.replace(".mp4", "-" + endTimeStr + ".mp4");
+    
+    if (QFile::exists(videoPath)) {
+        QFile::rename(videoPath, newPath);
+    }
+
+    log(QString::fromUtf8("录像"), QString::fromUtf8("停止录制: %1").arg(newPath));
+
+    cameraRecordings_.erase(it);
+
+    ui->startRecordBtn->setEnabled(true);
+    ui->stopRecordBtn->setEnabled(false);
+}
+
+void MainWindow::onViewRecordings() {
+    QString recordDir = QDir::cleanPath(QDir::currentPath() + "/" + QString::fromStdString(Config::RECORD_DIR));
+    QDir dir(recordDir);
+    if (!dir.exists()) {
+        QMessageBox::information(this, QString::fromUtf8("录像"), QString::fromUtf8("录像目录不存在: ") + recordDir);
+        return;
+    }
+    // 打开文件目录
+    QDesktopServices::openUrl(QUrl::fromLocalFile(recordDir));
+    log(QString::fromUtf8("录像"), QString::fromUtf8("打开录像目录: %1").arg(recordDir));
+}
+
+void MainWindow::onClearOldRecordings() {
+    int keepDays = ui->recordDaysSpin->value();
+    QDateTime cutoff = QDateTime::currentDateTime().addDays(-keepDays);
+    
+    QString recordDir = QDir::cleanPath(QDir::currentPath() + "/" + QString::fromStdString(Config::RECORD_DIR));
+    QDir dir(recordDir);
+    if (!dir.exists()) return;
+    
+    int deletedCount = 0;
+    QFileInfoList dateDirs = dir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot);
+    for (const QFileInfo& dateDirInfo : dateDirs) {
+        QDateTime dirTime = QFileInfo(dir, dateDirInfo.fileName()).lastModified();
+        if (dirTime < cutoff) {
+            QString subDirPath = recordDir + "/" + dateDirInfo.fileName();
+            QDir subDir(subDirPath);
+            // 删除日期目录下的所有文件
+            QFileInfoList files = subDir.entryInfoList(QDir::Files);
+            for (const QFileInfo& f : files) {
+                QFile::remove(f.absoluteFilePath());
+                deletedCount++;
+            }
+            // 删除空的子目录
+            subDir.rmdir(subDirPath);
+            // 删除日期目录
+            dir.rmdir(dateDirInfo.fileName());
+        }
+    }
+    
+    log(QString::fromUtf8("录像"), QString::fromUtf8("已清理 %1 个旧录像文件").arg(deletedCount));
+    QMessageBox::information(this, QString::fromUtf8("清理完成"), 
+        QString::fromUtf8("已清理 %1 个旧录像文件").arg(deletedCount));
+}
+
+// 录像时写入帧
+void MainWindow::writeRecordingFrame(int cameraId, const cv::Mat& frame) {
+    auto it = cameraRecordings_.find(cameraId);
+    if (it == cameraRecordings_.end()) return;
+    auto rec = it.value();
+    if (!rec || !rec->isRecording) return;
+    if (!rec->writer || !rec->writer->isOpened()) return;
+    
+    // 缩放到1080p
+    cv::Mat resized;
+    cv::resize(frame, resized, cv::Size(1920, 1080));
+    rec->writer->write(resized);
 }
 
 // ============================================================
@@ -1366,18 +1794,18 @@ void MainWindow::onSettings() {
 // ============================================================
 QString MainWindow::getHostIp() {
     // 优先获取非回环的IPv4地址
-    const auto interfaces = QNetworkInterface::allInterfaces();
-    for (const auto& iface : interfaces) {
-        if (iface.flags() & QNetworkInterface::IsLoopBack) continue;
-        if (!(iface.flags() & QNetworkInterface::IsUp)) continue;
-        if (!(iface.flags() & QNetworkInterface::IsRunning)) continue;
-        for (const auto& addr : iface.addressEntries()) {
-            if (addr.ip().protocol() == QAbstractSocket::IPv4Protocol &&
-                addr.ip() != QHostAddress::LocalHost) {
-                return addr.ip().toString();
-            }
-        }
-    }
+    //const auto interfaces = QNetworkInterface::allInterfaces();
+    //for (const auto& iface : interfaces) {
+    //    if (iface.flags() & QNetworkInterface::IsLoopBack) continue;
+    //    if (!(iface.flags() & QNetworkInterface::IsUp)) continue;
+    //    if (!(iface.flags() & QNetworkInterface::IsRunning)) continue;
+    //    for (const auto& addr : iface.addressEntries()) {
+    //        if (addr.ip().protocol() == QAbstractSocket::IPv4Protocol &&
+    //            addr.ip() != QHostAddress::LocalHost) {
+    //            return addr.ip().toString();
+    //        }
+    //    }
+    //}
     // 回退到配置文件中的IP
     return QString::fromStdString(Config::HOST_IP);
 }

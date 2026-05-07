@@ -20,7 +20,8 @@
 #include <QSpinBox>
 #include <QDoubleSpinBox>
 #include <QLineEdit>
-#include <QDialogButtonBox>
+#include <QDesktopServices>
+#include <QSharedPointer>
 #include <atomic>
 #include <deque>
 #include <unordered_map>
@@ -145,6 +146,12 @@ private slots:
     void onWsTextMessage(const QString& message);
     void retryAlarm(const QString& alarmId);
 
+    // WebSocket 消息处理
+    void handleSyncRequest(const QString& lastAlarmId);
+    void handleGetStreams();
+    void handleSetFence(const QString& streamId, const QJsonObject& fence);
+    void handleViewStream(const QString& streamId);
+
 private:
     void setupConnections();
     void updateThresholdLabels();
@@ -195,6 +202,10 @@ private:
     QByteArray mjpegFrame_;
     std::atomic<bool> mjpegKeyFrame_{false};
 
+    // MJPEG帧率控制
+    QTimer* mjpegFrameTimer_ = nullptr;
+    QByteArray mjpegPendingFrame_;
+
     // 待确认的告警: alarm_id → {json消息, 重试定时器, 重试次数}
     struct PendingAlarm {
         QString jsonMessage;
@@ -205,6 +216,32 @@ private:
 
     static constexpr int MAX_RETRY_COUNT = 10;
 
+    // 围栏设置: stream_id → fence区域
+    struct FenceRegion {
+        float x1, y1, x2, y2;
+    };
+    QMap<QString, FenceRegion> fenceRegions_;
+
+    // ====== 视频录制 ======
+    struct CameraRecording {
+        int cameraId = 0;
+        QString videoPath;        // 当前录像文件路径
+        cv::VideoWriter* writer = nullptr;  // OpenCV录像 writer
+        bool isRecording = false;  // 改为普通bool
+        QDateTime startTime;   // 开始时间
+    };
+    QMap<int, CameraRecording*> cameraRecordings_;  // 用原始指针
+    QString getRecordDir(int cameraId);  // 获取录像目录
+    void writeRecordingFrame(int cameraId, const cv::Mat& frame);  // 写帧到录像
+
+private slots:
+    // 录制相关
+    void onStartRecording();
+    void onStopRecording();
+    void onViewRecordings();
+    void onClearOldRecordings();
+
+private:
     bool isProcessing_ = false;  // 视频模式用
     float confThreshold_;
     float nmsThreshold_;
