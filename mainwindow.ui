@@ -85,6 +85,16 @@ QSlider { height: 28px; }</string>
        </widget>
       </item>
       <item>
+       <widget class="QPushButton" name="reloadModelBtn">
+        <property name="enabled">
+         <bool>false</bool>
+        </property>
+        <property name="text">
+         <string>重载模型</string>
+        </property>
+       </widget>
+      </item>
+      <item>
        <widget class="QCheckBox" name="batchInferenceCheck">
         <property name="toolTip">
          <string>启用批量推理可提升视频流处理性能 (batch=4)</string>

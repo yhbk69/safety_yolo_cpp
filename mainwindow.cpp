@@ -415,6 +415,7 @@ void MainWindow::setupConnections() {
     connect(ui->stopBtn,       &QPushButton::clicked, this, &MainWindow::onStopProcessing);
     connect(ui->browseModelBtn, &QPushButton::clicked, this, &MainWindow::onBrowseModel);
     connect(ui->loadModelBtn,   &QPushButton::clicked, this, &MainWindow::onLoadModel);
+    connect(ui->reloadModelBtn, &QPushButton::clicked, this, &MainWindow::onReloadModel);
     connect(ui->confSlider, &QSlider::valueChanged, this, &MainWindow::onConfThresholdChanged);
     connect(ui->nmsSlider,  &QSlider::valueChanged, this, &MainWindow::onNmsThresholdChanged);
     connect(ui->batchInferenceCheck, &QCheckBox::toggled, this, &MainWindow::onBatchInferenceToggled);
@@ -676,6 +677,7 @@ void MainWindow::onLoadModel() {
         statusMessageLabel_->setText("模型加载成功, 可以开始检测");
         log("模型", QString("模型加载成功: %1").arg(modelPath));
         enableControls(true);
+        ui->reloadModelBtn->setEnabled(true);
     } catch (const std::exception& e) {
         ui->modelStatusLabel->setText("✗ 加载失败");
         ui->modelStatusLabel->setStyleSheet("color: red; font-weight: bold;");
@@ -685,6 +687,38 @@ void MainWindow::onLoadModel() {
         enableControls(false);
     }
     ui->loadModelBtn->setEnabled(true);
+}
+
+void MainWindow::onReloadModel() {
+    QString modelPath = ui->modelPathEdit->text().trimmed();
+    if (modelPath.isEmpty() || !engine_) {
+        QMessageBox::warning(this, "警告", "当前没有已加载的模型");
+        return;
+    }
+    if (!fs::exists(modelPath.toStdString())) {
+        QMessageBox::warning(this, "警告", "模型文件不存在:\n" + modelPath);
+        return;
+    }
+    log("模型", QString("正在热切换模型: %1").arg(modelPath));
+    statusMessageLabel_->setText("正在热切换模型...");
+    ui->reloadModelBtn->setEnabled(false);
+    stopAllCameras();
+    QApplication::processEvents();
+
+    try {
+        engine_->reload(modelPath.toStdString());
+        ui->modelStatusLabel->setText("✓ 已重载");
+        ui->modelStatusLabel->setStyleSheet("color: green; font-weight: bold;");
+        statusMessageLabel_->setText("模型热切换成功");
+        log("模型", QString("模型热切换成功: %1").arg(modelPath));
+    } catch (const std::exception& e) {
+        ui->modelStatusLabel->setText("✗ 重载失败");
+        ui->modelStatusLabel->setStyleSheet("color: red; font-weight: bold;");
+        statusMessageLabel_->setText("模型热切换失败");
+        log("错误", QString("模型热切换失败: %1").arg(e.what()));
+        QMessageBox::critical(this, "热切换错误", e.what());
+    }
+    ui->reloadModelBtn->setEnabled(true);
 }
 
 // ============================================================

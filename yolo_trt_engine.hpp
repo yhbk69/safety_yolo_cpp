@@ -66,6 +66,21 @@ public:
     YoloTrtEngine(YoloTrtEngine&&) = default;
     YoloTrtEngine& operator=(YoloTrtEngine&&) = default;
 
+    // 模型热切换: 同步CUDA流, 释放旧资源, 重新加载engine
+    void reload(const std::string& newPath) {
+        if (stream_) cudaStreamSynchronize(stream_);
+        context_.reset();
+        engine_.reset();
+        runtime_.reset();
+        if (gpuInputBuffer_)  { cudaFree(gpuInputBuffer_);  gpuInputBuffer_ = nullptr; }
+        if (gpuOutputBuffer_) { cudaFree(gpuOutputBuffer_); gpuOutputBuffer_ = nullptr; }
+        CUDA_CHECK(cudaStreamCreate(&stream_));
+        loadEngine(newPath);
+        createContext();
+        allocateGpuBuffers();
+        std::cout << "[Engine] Model hot-reloaded: " << newPath << std::endl;
+    }
+
     void infer(const std::vector<float>& input, std::vector<Detection>& detections,
                int imgWidth, int imgHeight,
                float confThreshold = Config::CONF_THRESHOLD,

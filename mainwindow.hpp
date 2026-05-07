@@ -129,6 +129,7 @@ private slots:
     void onOpenFolder();
     void onBrowseModel();
     void onLoadModel();
+    void onReloadModel();
     void onStopProcessing();
     void onConfThresholdChanged(int value);
     void onNmsThresholdChanged(int value);
