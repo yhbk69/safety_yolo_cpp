@@ -25,6 +25,7 @@
 #include <vector>
 #include <string>
 #include <memory>
+#include <stdexcept>
 #include <cuda_runtime.h>
 #include "NvInfer.h"
 #include "logger.hpp"
@@ -32,76 +33,110 @@
 #include "types.hpp"
 #include "postprocessor.hpp"
 
-// YOLO TensorRT推理引擎类
-// 使用RAII模式管理资源
+#define CUDA_CHECK(call) \
+    do { \
+        cudaError_t err = call; \
+        if (err != cudaSuccess) { \
+            throw std::runtime_error(std::string("[CUDA Error] ") + \
+                cudaGetErrorName(err) + ": " + cudaGetErrorString(err)); \
+        } \
+    } while(0)
+
 class YoloTrtEngine {
 public:
-    // 构造函数: 加载TensorRT Engine并初始化GPU资源
     explicit YoloTrtEngine(const std::string& enginePath) {
+        CUDA_CHECK(cudaStreamCreate(&stream_));
         loadEngine(enginePath);
         createContext();
         allocateGpuBuffers();
         std::cout << "[Engine] TensorRT engine loaded successfully" << std::endl;
     }
 
-    // 析构函数: 释放所有GPU资源. TensorRT 10.x使用智能指针, 无需手动destroy()
     ~YoloTrtEngine() {
+        if (stream_) {
+            cudaStreamSynchronize(stream_);
+            cudaStreamDestroy(stream_);
+        }
         cudaFree(gpuInputBuffer_);
         cudaFree(gpuOutputBuffer_);
     }
 
-    // 禁止拷贝(GPU资源不能被共享)
     YoloTrtEngine(const YoloTrtEngine&) = delete;
     YoloTrtEngine& operator=(const YoloTrtEngine&) = delete;
-
-    // 允许移动语义(资源转移)
     YoloTrtEngine(YoloTrtEngine&&) = default;
     YoloTrtEngine& operator=(YoloTrtEngine&&) = default;
 
-    // 执行一次推理
-    // confThreshold: 置信度阈值(覆盖Config默认值)
-    // iouThreshold:  NMS的IOU阈值(覆盖Config默认值)
     void infer(const std::vector<float>& input, std::vector<Detection>& detections,
                int imgWidth, int imgHeight,
                float confThreshold = Config::CONF_THRESHOLD,
                float iouThreshold = Config::IOU_THRESHOLD) {
-        // 步骤1: 将输入数据从CPU复制到GPU
-        cudaMemcpy(gpuInputBuffer_, input.data(), input.size() * sizeof(float),
-                   cudaMemcpyHostToDevice);
+        CUDA_CHECK(cudaMemcpyAsync(gpuInputBuffer_, input.data(),
+                    input.size() * sizeof(float), cudaMemcpyHostToDevice, stream_));
+        CUDA_CHECK(cudaStreamSynchronize(stream_));
 
-        // 步骤2: 执行TensorRT推理
         context_->executeV2(gpuBuffers_);
 
-        // 步骤3: 将输出数据从GPU复制回CPU
         std::vector<float> output(getOutputSize());
-        cudaMemcpy(output.data(), gpuOutputBuffer_, output.size() * sizeof(float),
-                   cudaMemcpyDeviceToHost);
+        CUDA_CHECK(cudaMemcpy(output.data(), gpuOutputBuffer_,
+                    output.size() * sizeof(float), cudaMemcpyDeviceToHost));
 
-        // 步骤4: 后处理(解码加NMS), 传入动态阈值
         detections = Postprocessor::decodeDetections(output.data(), imgWidth, imgHeight,
-                                                      confThreshold, iouThreshold);
+                                                       confThreshold, iouThreshold);
     }
 
-    // 获取输入张量的大小(元素个数) = 宽度*高度*3
     int getInputSize() const {
         return Config::INPUT_WIDTH * Config::INPUT_HEIGHT * 3;
     }
 
-    // 获取输出张量的大小(元素个数) = (类别数+4)*8400
     int getOutputSize() const {
         return (Config::NUM_CLASSES + 4) * 8400;
     }
 
-private:
-    std::unique_ptr<nvinfer1::IRuntime> runtime_;          // TensorRT运行时对象
-    std::unique_ptr<nvinfer1::ICudaEngine> engine_;         // TensorRT推理引擎
-    std::unique_ptr<nvinfer1::IExecutionContext> context_;  // 执行上下文
-    void* gpuInputBuffer_ = nullptr;    // GPU输入缓冲区
-    void* gpuOutputBuffer_ = nullptr;   // GPU输出缓冲区
-    void* gpuBuffers_[2] = {nullptr, nullptr};  // GPU缓冲区指针数组
-    TrtLogger logger_;                  // TensorRT日志记录器
+    // 批量推理: 输入batch*N, 输出每个frame的detections
+    void batchInfer(const std::vector<std::vector<float>>& inputs, std::vector<std::vector<Detection>>& detectionsList,
+                  const std::vector<std::pair<int,int>>& imgSizes,
+                  float confThreshold = Config::CONF_THRESHOLD,
+                  float iouThreshold = Config::IOU_THRESHOLD) {
+        const int batchSize = static_cast<int>(inputs.size());
+        if (batchSize == 0) return;
 
-    // 从磁盘加载并反序列化TensorRT Engine
+        // 一次性拷贝整个batch到GPU
+        size_t batchInputSize = inputs[0].size() * batchSize;
+        std::vector<float> batchInput(batchInputSize);
+        for (int i = 0; i < batchSize; ++i) {
+            std::copy(inputs[i].begin(), inputs[i].end(), batchInput.begin() + i * inputs[i].size());
+        }
+
+        CUDA_CHECK(cudaMemcpyAsync(gpuInputBuffer_, batchInput.data(),
+                    batchInputSize * sizeof(float), cudaMemcpyHostToDevice, stream_));
+        CUDA_CHECK(cudaStreamSynchronize(stream_));
+
+        // 批量执行
+        context_->executeV2(gpuBuffers_);
+
+        std::vector<float> output(getOutputSize() * batchSize);
+        CUDA_CHECK(cudaMemcpy(output.data(), gpuOutputBuffer_,
+                    output.size() * sizeof(float), cudaMemcpyDeviceToHost));
+
+        // 逐帧后处理
+        detectionsList.resize(batchSize);
+        for (int i = 0; i < batchSize; ++i) {
+            float* frameOutput = output.data() + i * getOutputSize();
+            detectionsList[i] = Postprocessor::decodeDetections(frameOutput, imgSizes[i].first, imgSizes[i].second,
+                                                     confThreshold, iouThreshold);
+        }
+    }
+
+private:
+    cudaStream_t stream_ = nullptr;
+    std::unique_ptr<nvinfer1::IRuntime> runtime_;
+    std::unique_ptr<nvinfer1::ICudaEngine> engine_;
+    std::unique_ptr<nvinfer1::IExecutionContext> context_;
+    void* gpuInputBuffer_ = nullptr;
+    void* gpuOutputBuffer_ = nullptr;
+    void* gpuBuffers_[2] = {nullptr, nullptr};
+    TrtLogger logger_;
+
     void loadEngine(const std::string& path) {
         std::ifstream file(path, std::ios::binary);
         if (!file.good()) {
@@ -114,29 +149,25 @@ private:
         file.read(trtModelData.data(), size);
         file.close();
 
-        runtime_ = std::unique_ptr<nvinfer1::IRuntime>(
-            nvinfer1::createInferRuntime(logger_));
-        engine_ = std::unique_ptr<nvinfer1::ICudaEngine>(
-            runtime_->deserializeCudaEngine(trtModelData.data(), size));
-
+        runtime_.reset(nvinfer1::createInferRuntime(logger_));
+        engine_.reset(runtime_->deserializeCudaEngine(trtModelData.data(), size));
         if (!engine_) {
             throw std::runtime_error("[Engine] Failed to deserialize engine from: " + path);
         }
     }
 
-    // 创建推理执行上下文
     void createContext() {
-        context_ = std::unique_ptr<nvinfer1::IExecutionContext>(
-            engine_->createExecutionContext());
+        context_.reset(engine_->createExecutionContext());
     }
 
-    // 分配GPU内存缓冲区
     void allocateGpuBuffers() {
-        cudaMalloc(&gpuInputBuffer_,  getInputSize()  * sizeof(float));
-        cudaMalloc(&gpuOutputBuffer_, getOutputSize() * sizeof(float));
+        CUDA_CHECK(cudaMalloc(&gpuInputBuffer_,  getInputSize()  * sizeof(float)));
+        CUDA_CHECK(cudaMalloc(&gpuOutputBuffer_, getOutputSize() * sizeof(float)));
         gpuBuffers_[0] = gpuInputBuffer_;
         gpuBuffers_[1] = gpuOutputBuffer_;
     }
 };
+
+#undef CUDA_CHECK
 
 #endif // YOLO_TRT_ENGINE_HPP

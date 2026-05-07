@@ -106,11 +106,13 @@ namespace Postprocessor {
 
     // 在图像上绘制检测结果(边界框和类别标签)
     static void drawDetections(cv::Mat& img, const std::vector<Detection>& detections) {
-        cv::Scalar boxColor(0, 255, 0);  // BGR绿色
-
         for (const auto& det : detections) {
             std::string className = Config::CLASS_NAMES[det.class_id];
-            std::string label = className + ": " + std::to_string(det.conf).substr(0, 4);
+            // no_xx 用红色，正常用绿色
+            cv::Scalar boxColor = (className.find("no_") == 0) ? cv::Scalar(0, 0, 255) : cv::Scalar(0, 255, 0);
+            char confBuf[8];
+            snprintf(confBuf, sizeof(confBuf), "%.3f", det.conf);
+            std::string label = className + ": " + confBuf;
 
             // 绘制边界框
             cv::rectangle(img,

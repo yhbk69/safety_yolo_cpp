@@ -15,6 +15,7 @@
 #include <vector>
 #include <string>
 #include <cstdio>
+#include <QMetaType>
 
 // 单个检测结果. 坐标系统以原图左上角为原点(0,0), 单位为像素
 struct Detection {
@@ -32,6 +33,23 @@ struct Detection {
     // 便捷方法: 获取检测框面积
     float area() const { return w * h; }
 };
+
+// 摄像头信息
+struct CameraInfo {
+    int id;              // 摄像头ID
+    std::string name;    // 摄像头名称
+    std::string url;     // RTSP URL 或 文件路径
+    std::string type;    // "rtsp", "file", "webcam"
+    bool active;         // 是否正在推流
+
+    CameraInfo() : id(0), active(false) {}
+    CameraInfo(int i, const std::string& n, const std::string& u, const std::string& t)
+        : id(i), name(n), url(u), type(t), active(false) {}
+};
+
+// 注册 Detection 为 Qt 元类型，支持跨线程信号槽传递
+Q_DECLARE_METATYPE(Detection)
+Q_DECLARE_METATYPE(std::vector<Detection>)
 
 // 将检测结果格式化为字符串(调试用)
 inline std::string detectionToString(const Detection& det) {

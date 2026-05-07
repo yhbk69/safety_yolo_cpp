@@ -22,7 +22,10 @@
 #include <vector>
 #include <algorithm>
 #include <filesystem>
-#include <opencv2/opencv.hpp>
+#include <opencv2/core.hpp>
+#include <opencv2/imgproc.hpp>
+#include <opencv2/highgui.hpp>
+#include <opencv2/videoio.hpp>
 #include "config.hpp"
 #include "types.hpp"
 #include "preprocessor.hpp"
@@ -31,14 +34,11 @@
 
 namespace fs = std::filesystem;
 
-// 推理执行器类. 封装完整的推理流程, 支持多种输入源
 class InferenceRunner {
 public:
-    // 构造函数: 初始化TensorRT引擎
     explicit InferenceRunner(const std::string& modelPath)
         : engine_(modelPath) {}
 
-    // 对单张图片进行推理
     void runImage(const std::string& imgPath) {
         cv::Mat img = cv::imread(imgPath);
         if (img.empty()) {
@@ -46,32 +46,23 @@ public:
             return;
         }
 
-        // 预处理
-        cv::Mat processed = Preprocessor::letterbox(img);
-        std::vector<float> tensor = Preprocessor::imageToTensor(processed);
-
-        // 推理
+        auto tensor = Preprocessor::imageToTensor(Preprocessor::letterbox(img));
         std::vector<Detection> detections;
         engine_.infer(tensor, detections, img.cols, img.rows);
 
         std::cout << "[Runner] Detected " << detections.size() << " objects" << std::endl;
-
-        // 绘制结果
         Postprocessor::drawDetections(img, detections);
 
-        // 保存结果
         std::string filename = imgPath.substr(imgPath.find_last_of("/\\") + 1);
         std::string outputPath = Config::OUTPUT_DIR + "/result_" + filename;
         cv::imwrite(outputPath, img);
         std::cout << "[Runner] Saved: " << outputPath << std::endl;
 
-        // 显示结果
         cv::imshow("YOLO11 Detection", img);
         cv::waitKey(0);
         cv::destroyWindow("YOLO11 Detection");
     }
 
-    // 对视频文件进行逐帧推理
     void runVideo(const std::string& videoPath) {
         cv::VideoCapture cap(videoPath);
         if (!cap.isOpened()) {
@@ -83,44 +74,23 @@ public:
         std::string outputPath = Config::OUTPUT_DIR + "/result_" + filename;
 
         int fourcc = cv::VideoWriter::fourcc('m', 'p', '4', 'v');
-        double fps = cap.get(cv::CAP_PROP_FPS);
-        int frameWidth  = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_WIDTH));
-        int frameHeight = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_HEIGHT));
-        cv::VideoWriter writer(outputPath, fourcc, fps, cv::Size(frameWidth, frameHeight));
+        cv::VideoWriter writer(outputPath, fourcc, cap.get(cv::CAP_PROP_FPS),
+            cv::Size(static_cast<int>(cap.get(cv::CAP_PROP_FRAME_WIDTH)),
+                     static_cast<int>(cap.get(cv::CAP_PROP_FRAME_HEIGHT))));
 
-        cv::Mat frame;
         int frameCount = 0;
-
         std::cout << "[Runner] Processing video: " << filename << std::endl;
 
-        while (cap.read(frame)) {
-            cv::Mat processed = Preprocessor::letterbox(frame);
-            std::vector<float> tensor = Preprocessor::imageToTensor(processed);
-
-            std::vector<Detection> detections;
-            engine_.infer(tensor, detections, frame.cols, frame.rows);
-
-            Postprocessor::drawDetections(frame, detections);
+        processFrames(cap, [&](cv::Mat& frame) {
             writer.write(frame);
-            cv::imshow("YOLO11 Detection", frame);
-
-            if (cv::waitKey(1) == 27) break;
-
-            frameCount++;
-            if (frameCount % 30 == 0) {
-                std::cout << "\r[Runner] Frame: " << frameCount << std::flush;
-            }
-        }
+            (void)frameCount++;
+        });
 
         std::cout << "\n[Runner] Total frames: " << frameCount << std::endl;
         std::cout << "[Runner] Saved: " << outputPath << std::endl;
-
-        cap.release();
         writer.release();
-        cv::destroyAllWindows();
     }
 
-    // 实时摄像头推理
     void runCamera() {
         cv::VideoCapture cap(0, cv::CAP_DSHOW);
         if (!cap.isOpened()) {
@@ -130,24 +100,8 @@ public:
 
         std::cout << "[Runner] Camera opened. Press ESC to exit." << std::endl;
 
-        cv::Mat frame;
-        int frameCount = 0;
+        processFrames(cap, [](cv::Mat&) {});
 
-        while (cap.read(frame)) {
-            cv::Mat processed = Preprocessor::letterbox(frame);
-            std::vector<float> tensor = Preprocessor::imageToTensor(processed);
-
-            std::vector<Detection> detections;
-            engine_.infer(tensor, detections, frame.cols, frame.rows);
-
-            Postprocessor::drawDetections(frame, detections);
-            cv::imshow("YOLO11 Detection (Press ESC to exit)", frame);
-
-            if (cv::waitKey(1) == 27) break;
-            frameCount++;
-        }
-
-        std::cout << "[Runner] Total frames processed: " << frameCount << std::endl;
         cap.release();
         cv::destroyAllWindows();
     }
@@ -174,7 +128,28 @@ public:
     }
 
 private:
-    YoloTrtEngine engine_;  // TensorRT推理引擎实例
+    template<typename F>
+    void processFrames(cv::VideoCapture& cap, F&& onFrame) {
+        cv::Mat frame;
+        int frameCount = 0;
+        while (cap.read(frame)) {
+            auto tensor = Preprocessor::imageToTensor(Preprocessor::letterbox(frame));
+            std::vector<Detection> detections;
+            engine_.infer(tensor, detections, frame.cols, frame.rows);
+            Postprocessor::drawDetections(frame, detections);
+
+            cv::imshow("YOLO11 Detection", frame);
+            onFrame(frame);
+
+            if (cv::waitKey(1) == 27) break;
+            frameCount++;
+            if (frameCount % 30 == 0) {
+                std::cout << "\r[Runner] Frame: " << frameCount << std::flush;
+            }
+        }
+    }
+
+    YoloTrtEngine engine_;
 };
 
 #endif // INFERENCE_RUNNER_HPP

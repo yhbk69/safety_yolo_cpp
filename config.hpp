@@ -34,6 +34,10 @@ namespace Config {
     // 检测类别总数. 必须与模型训练时的类别数完全一致
     constexpr int NUM_CLASSES = 11;
 
+    // 批量推理配置
+    constexpr int BATCH_SIZE = 4;
+    constexpr bool USE_BATCH_INFERENCE = false; // 设为true启用批量推理
+
     // 类别名称列表. 顺序必须与训练时的类别索引一致
     // 索引0=helmet, 1=gloves, 2=vest, 3=boots, 4=goggles
     // 索引5=none, 6=Person, 7=no_helmet, 8=no_goggle, 9=no_gloves, 10=no_boots
@@ -62,6 +66,9 @@ namespace Config {
     // HTTP 文件服务端口(用于 URL 构造)
     constexpr int HTTP_PORT = 9091;
 
+    // MJPEG 实时流服务端口
+    constexpr int STREAM_PORT = 9092;
+
     // ACK 等待超时(毫秒), 超时后重发
     constexpr int ACK_TIMEOUT_MS = 5000;
 
@@ -73,6 +80,18 @@ namespace Config {
 
     // 同一类别告警最小间隔(毫秒)
     constexpr int ALERT_COOLDOWN_MS = 10000;
+
+    // ====== 视频录制配置 ======
+    // 默认录像保存根目录
+    constexpr const char* RECORD_DIR = "recordings";
+
+    // 录像文件命名格式: {日期}/{摄像头ID}/{起始时间}-{结束时间}.mp4
+    // 例如: recordings/20250707/camera_0/102535-104520.mp4
+
+    // 录像删除策略: 0=不删除, 1=按天数, 2=按文件大小(G)
+    constexpr int RECORD_DELETE_POLICY = 1;
+    constexpr int RECORD_KEEP_DAYS = 7;        // 保留天数
+    constexpr float RECORD_MAX_SIZE_GB = 10.0;  // 最大磁盘占用(G)
 }
 
 #endif // CONFIG_HPP
