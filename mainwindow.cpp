@@ -19,6 +19,7 @@
 #include <QUuid>
 #include <QFile>
 #include <QInputDialog>
+#include <QBuffer>
 
 #include <chrono>
 #include <filesystem>
@@ -296,6 +297,42 @@ void InferenceWorker::saveAlertFiles(const QString& alarmId, const QString& alar
 
 
 // ============================================================
+// MJPEG 推流
+// ============================================================
+void MainWindow::startMjpegServer() {
+    auto& cfg = RuntimeConfig::instance();
+    mjpegServer_ = new QTcpServer(this);
+    if (!mjpegServer_->listen(QHostAddress::Any, (quint16)cfg.streamPort())) {
+        log(QString::fromUtf8("MJPEG"),
+            QString::fromUtf8("服务启动失败, 端口: %1").arg(cfg.streamPort()));
+        return;
+    }
+    connect(mjpegServer_, &QTcpServer::newConnection, this, [this]() {
+        auto* socket = mjpegServer_->nextPendingConnection();
+        if (!socket) return;
+        mjpegClients_.append(socket);
+        connect(socket, &QTcpSocket::disconnected, this, [this, socket]() {
+            mjpegClients_.removeAll(socket);
+            socket->deleteLater();
+        });
+    });
+    log(QString::fromUtf8("MJPEG"),
+        QString::fromUtf8("服务已启动: http://%1:%2/stream")
+            .arg(getHostIp()).arg(cfg.streamPort()));
+}
+
+void MainWindow::pushMjpegFrame(const QByteArray& jpegData) {
+    if (mjpegClients_.isEmpty()) return;
+    QByteArray chunk = QByteArray("--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ")
+        + QByteArray::number(jpegData.size()) + QByteArray("\r\n\r\n")
+        + jpegData + QByteArray("\r\n");
+    auto clients = mjpegClients_;
+    for (auto* c : clients) {
+        if (c->state() == QAbstractSocket::ConnectedState) c->write(chunk);
+    }
+}
+
+// ============================================================
 // MainWindow
 // ============================================================
 
@@ -331,6 +368,7 @@ MainWindow::MainWindow(QWidget *parent)
     loadRuntimeConfig();
 
     startWebSocketServer();
+    startMjpegServer();
     if (fs::exists(Config::MODEL_PATH)) onLoadModel();
 
     ui->batchInferenceCheck->setChecked(Config::USE_BATCH_INFERENCE);
@@ -361,6 +399,9 @@ MainWindow::~MainWindow() {
     }
     wsClients_.clear();
     if (wsServer_) wsServer_->close();
+    for (auto* client : mjpegClients_) client->close();
+    mjpegClients_.clear();
+    if (mjpegServer_) { mjpegServer_->close(); delete mjpegServer_; }
     delete ui;
 }
 
@@ -932,6 +973,15 @@ void MainWindow::onStopProcessing() {
 }
 
 void MainWindow::onFrameProcessed(int cameraId, QImage image, std::vector<Detection> detections, double elapsedMs) {
+    // MJPEG推流: 每帧都推
+    QByteArray jpegData;
+    {
+        QBuffer buf(&jpegData);
+        buf.open(QIODevice::WriteOnly);
+        image.save(&buf, "JPEG", 60);
+    }
+    pushMjpegFrame(jpegData);
+
     // 只更新当前活跃显示的摄像头画面
     if (cameraId == activeDisplayCamera_) {
         updateDisplay(image);

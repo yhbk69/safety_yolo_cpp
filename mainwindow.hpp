@@ -155,6 +155,8 @@ private:
     void stopAllCameras();
     void startWebSocketServer();
     void startHttpFileServer();
+    void startMjpegServer();
+    void pushMjpegFrame(const QByteArray& jpegData);
     void closeEvent(QCloseEvent* event) override;
     void loadRuntimeConfig();
     void saveRuntimeConfig();
@@ -184,6 +186,13 @@ private:
     QWebSocketServer* wsServer_ = nullptr;
     QList<QWebSocket*> wsClients_;
     QTcpServer* httpServer_ = nullptr;
+    QTcpServer* mjpegServer_ = nullptr;
+    QList<QTcpSocket*> mjpegClients_;
+
+    // MJPEG最新帧(线程安全)
+    std::mutex mjpegMutex_;
+    QByteArray mjpegFrame_;
+    std::atomic<bool> mjpegKeyFrame_{false};
 
     // 待确认的告警: alarm_id → {json消息, 重试定时器, 重试次数}
     struct PendingAlarm {
