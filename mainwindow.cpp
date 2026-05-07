@@ -85,6 +85,8 @@ void InferenceWorker::processCamera(float confThresh, float nmsThresh) {
     const int frameDelayMs = 33;
     while (running_) {
         cv::Mat frame;
+        // 设置读取超时，避免长时间阻塞
+        cap.set(cv::CAP_PROP_BUFFERSIZE, 1);
         if (!cap.read(frame)) {
             if (running_) {
                 emit errorOccurred(cameraId_, "摄像头读取失败，设备可能已断开");
@@ -95,6 +97,7 @@ void InferenceWorker::processCamera(float confThresh, float nmsThresh) {
         emit frameProcessed(cameraId_, result.image, result.detections, 0);
         QThread::msleep(frameDelayMs);
     }
+    // 正常退出时释放资源
     cap.release();
     emit finished(cameraId_);
 }
@@ -906,24 +909,29 @@ void MainWindow::stopCamera(int cameraId) {
     auto it = cameraWorkers_.find(cameraId);
     if (it == cameraWorkers_.end()) return;
 
+    log("系统", QString("正在停止摄像头 %1...").arg(cameraId));
+
+    // 1. 设置停止标志
     if (it->worker) it->worker->stop();
+    
+    // 2. 等待线程退出（缩短超时时间到2秒）
     if (it->thread) {
-        if (!it->thread->wait(8000)) {
-            log("系统", QString("摄像头 %1 线程未响应，强制清理").arg(cameraId));
+        if (!it->thread->wait(2000)) {
+            log("系统", QString("摄像头 %1 线程未响应，强制终止").arg(cameraId));
+            // 不再使用强制释放，避免阻塞
+            it->thread->terminate();
+            it->thread->wait(500);
         }
     }
 
-    // 如果是默认摄像头, 重置UI
+    // 3. 清理资源
+    cameraWorkers_.erase(it);
+
+    // 4. 更新UI状态
     if (cameraId == 0) {
         ui->cameraBtn->setChecked(false);
         ui->cameraBtn->setText(QString::fromUtf8("开启摄像头"));
     }
-
-    cameraWorkers_.erase(it);
-
-    // 强制释放摄像头资源
-    cv::VideoCapture forceRelease(cameraId, cv::CAP_DSHOW);
-    if (forceRelease.isOpened()) forceRelease.release();
 
     if (cameraWorkers_.isEmpty()) {
         ui->cameraStatusLabel->setStyleSheet("font-size: 20px; font-weight: bold; padding: 0 12px;");
