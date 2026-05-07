@@ -64,6 +64,8 @@ void InferenceWorker::processCamera(float confThresh, float nmsThresh) {
         return;
     }
     running_ = true;
+    // 限制处理帧率约30fps，避免信号洪水卡死主线程
+    const int frameDelayMs = 33;
     while (running_) {
         cv::Mat frame;
         if (!cap.read(frame)) {
@@ -74,7 +76,7 @@ void InferenceWorker::processCamera(float confThresh, float nmsThresh) {
         }
         auto result = processOneFrame(frame, confThresh, nmsThresh);
         emit frameProcessed(result.image, result.detections, 0);
-        QThread::msleep(1);  // 让出CPU，同时让stop()有机会被检测
+        QThread::msleep(frameDelayMs);
     }
     cap.release();
     emit finished();
@@ -775,35 +777,70 @@ void MainWindow::updateThresholdLabels() {
 void MainWindow::updateDisplay(const QImage& image) {
     QPixmap pixmap = QPixmap::fromImage(image);
     QSize labelSize = ui->displayLabel->size();
-    pixmap = pixmap.scaled(labelSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    // 实时视频用FastTransformation，避免SmoothTransformation卡死主线程
+    pixmap = pixmap.scaled(labelSize, Qt::KeepAspectRatio, Qt::FastTransformation);
     ui->displayLabel->setPixmap(pixmap);
 }
 
 void MainWindow::updateDetectionList(const std::vector<Detection>& detections, double elapsedMs) {
-    ui->resultListWidget->clear();
-    if (detections.empty()) {
-        ui->resultListWidget->addItem("未检测到目标");
-        ui->totalCountLabel->setText("目标总数: 0");
-        timeLabel_->setText(QString("耗时: %1ms").arg(elapsedMs, 0, 'f', 1));
-        return;
+    // 增量更新：只在检测数量变化时才重建列表，避免每帧clear+rebuild
+    int newCount = static_cast<int>(detections.size());
+    int oldCount = ui->resultListWidget->count();
+    bool needRebuild = (newCount != oldCount);
+
+    // 如果数量相同，检查类别是否变化
+    if (!needRebuild && newCount > 0) {
+        for (int i = 0; i < newCount && i < oldCount; ++i) {
+            auto* item = ui->resultListWidget->item(i);
+            const auto& name = Config::CLASS_NAMES[detections[i].class_id];
+            QString text = QString("%1  %2")
+                .arg(QString::fromStdString(name), -12).arg(detections[i].conf, 0, 'f', 3);
+            if (item->text() != text) { needRebuild = true; break; }
+        }
     }
 
-    std::vector<Detection> sorted = detections;
-    std::sort(sorted.begin(), sorted.end(),
-              [](const Detection& a, const Detection& b) { return a.conf > b.conf; });
+    if (needRebuild) {
+        ui->resultListWidget->clear();
+        if (detections.empty()) {
+            ui->resultListWidget->addItem("未检测到目标");
+        } else {
+            std::vector<Detection> sorted = detections;
+            std::sort(sorted.begin(), sorted.end(),
+                      [](const Detection& a, const Detection& b) { return a.conf > b.conf; });
 
-    for (const auto& det : sorted) {
-        const auto& name = Config::CLASS_NAMES[det.class_id];
-        QString text = QString("%1  %2")
-            .arg(QString::fromStdString(name), -12).arg(det.conf, 0, 'f', 3);
-        auto* item = new QListWidgetItem(text, ui->resultListWidget);
-        if (name.find("no_") == 0)
-            item->setForeground(QColor("#d9534f"));
-        else if (name == "Person" || name == "none")
-            item->setForeground(QColor("#888888"));
-        else
-            item->setForeground(QColor("#5cb85c"));
+            for (const auto& det : sorted) {
+                const auto& name = Config::CLASS_NAMES[det.class_id];
+                QString text = QString("%1  %2")
+                    .arg(QString::fromStdString(name), -12).arg(det.conf, 0, 'f', 3);
+                auto* item = new QListWidgetItem(text, ui->resultListWidget);
+                if (name.find("no_") == 0)
+                    item->setForeground(QColor("#d9534f"));
+                else if (name == "Person" || name == "none")
+                    item->setForeground(QColor("#888888"));
+                else
+                    item->setForeground(QColor("#5cb85c"));
+            }
+        }
+    } else {
+        // 数量相同，只更新置信度数值
+        std::vector<Detection> sorted = detections;
+        std::sort(sorted.begin(), sorted.end(),
+                  [](const Detection& a, const Detection& b) { return a.conf > b.conf; });
+        for (int i = 0; i < static_cast<int>(sorted.size()); ++i) {
+            auto* item = ui->resultListWidget->item(i);
+            const auto& name = Config::CLASS_NAMES[sorted[i].class_id];
+            QString text = QString("%1  %2")
+                .arg(QString::fromStdString(name), -12).arg(sorted[i].conf, 0, 'f', 3);
+            item->setText(text);
+            if (name.find("no_") == 0)
+                item->setForeground(QColor("#d9534f"));
+            else if (name == "Person" || name == "none")
+                item->setForeground(QColor("#888888"));
+            else
+                item->setForeground(QColor("#5cb85c"));
+        }
     }
+
     ui->totalCountLabel->setText(QString("目标总数: %1").arg(detections.size()));
     timeLabel_->setText(QString("耗时: %1ms").arg(elapsedMs, 0, 'f', 1));
 }
