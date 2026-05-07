@@ -18,6 +18,7 @@
 #include <QNetworkInterface>
 #include <QUuid>
 #include <QFile>
+#include <QInputDialog>
 
 #include <chrono>
 #include <filesystem>
@@ -30,8 +31,13 @@ namespace fs = std::filesystem;
 // InferenceWorker
 // ============================================================
 
-InferenceWorker::InferenceWorker(YoloTrtEngine* engine)
+InferenceWorker::InferenceWorker(YoloTrtEngine* engine, int cameraId,
+                                     const QString& cameraName,
+                                     const QString& source)
     : engine_(engine)
+    , cameraId_(cameraId)
+    , cameraName_(cameraName)
+    , source_(source)
 {
     outputDir_ = QDir::cleanPath(QDir::currentPath() + "/" +
         QString::fromStdString(Config::OUTPUT_DIR));
@@ -41,8 +47,8 @@ InferenceWorker::InferenceWorker(YoloTrtEngine* engine)
 void InferenceWorker::processVideo(const QString& path, float confThresh, float nmsThresh) {
     cv::VideoCapture cap(path.toStdString());
     if (!cap.isOpened()) {
-        emit errorOccurred("无法打开视频文件: " + path);
-        emit finished();
+        emit errorOccurred(cameraId_, "无法打开视频文件: " + path);
+        emit finished(cameraId_);
         return;
     }
     running_ = true;
@@ -50,36 +56,70 @@ void InferenceWorker::processVideo(const QString& path, float confThresh, float 
         cv::Mat frame;
         if (!cap.read(frame)) break;
         auto result = processOneFrame(frame, confThresh, nmsThresh);
-        emit frameProcessed(result.image, result.detections, 0);
+        emit frameProcessed(cameraId_, result.image, result.detections, 0);
     }
     cap.release();
-    emit finished();
+    emit finished(cameraId_);
 }
 
 void InferenceWorker::processCamera(float confThresh, float nmsThresh) {
-    cv::VideoCapture cap(0, cv::CAP_DSHOW);
+    // 使用source_或cameraId_打开摄像头
+    cv::VideoCapture cap;
+    if (!source_.isEmpty() && source_.startsWith("rtsp://")) {
+        cap.open(source_.toStdString());
+    } else if (!source_.isEmpty()) {
+        bool ok = false;
+        int devId = source_.toInt(&ok);
+        cap.open(ok ? devId : 0, cv::CAP_DSHOW);
+    } else {
+        cap.open(cameraId_, cv::CAP_DSHOW);
+    }
+
     if (!cap.isOpened()) {
-        emit errorOccurred("无法打开摄像头, 请检查设备连接");
-        emit finished();
+        emit errorOccurred(cameraId_, "无法打开摄像头, 请检查设备连接");
+        emit finished(cameraId_);
         return;
     }
     running_ = true;
-    // 限制处理帧率约30fps，避免信号洪水卡死主线程
     const int frameDelayMs = 33;
     while (running_) {
         cv::Mat frame;
         if (!cap.read(frame)) {
             if (running_) {
-                emit errorOccurred("摄像头读取失败，设备可能已断开");
+                emit errorOccurred(cameraId_, "摄像头读取失败，设备可能已断开");
             }
             break;
         }
         auto result = processOneFrame(frame, confThresh, nmsThresh);
-        emit frameProcessed(result.image, result.detections, 0);
+        emit frameProcessed(cameraId_, result.image, result.detections, 0);
         QThread::msleep(frameDelayMs);
     }
     cap.release();
-    emit finished();
+    emit finished(cameraId_);
+}
+
+void InferenceWorker::processSource(float confThresh, float nmsThresh) {
+    // 通用源处理, 自动判断类型
+    if (!source_.isEmpty() && source_.startsWith("rtsp://")) {
+        cv::VideoCapture cap(source_.toStdString());
+        if (!cap.isOpened()) {
+            emit errorOccurred(cameraId_, "无法打开RTSP流: " + source_);
+            emit finished(cameraId_);
+            return;
+        }
+        running_ = true;
+        while (running_) {
+            cv::Mat frame;
+            if (!cap.read(frame)) break;
+            auto result = processOneFrame(frame, confThresh, nmsThresh);
+            emit frameProcessed(cameraId_, result.image, result.detections, 0);
+            QThread::msleep(10);
+        }
+        cap.release();
+        emit finished(cameraId_);
+    } else {
+        processCamera(confThresh, nmsThresh);
+    }
 }
 
 void InferenceWorker::stop() {
@@ -251,7 +291,7 @@ void InferenceWorker::saveAlertFiles(const QString& alarmId, const QString& alar
     QString alertJson = QString::fromUtf8(
         QJsonDocument(root).toJson(QJsonDocument::Compact));
 
-    emit alertSaved(videoPath, imagePath, alertJson);
+    emit alertSaved(cameraId_, videoPath, imagePath, alertJson);
 }
 
 
@@ -262,8 +302,6 @@ void InferenceWorker::saveAlertFiles(const QString& alarmId, const QString& alar
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
     , engine_(nullptr)
-    , workerThread_(nullptr)
-    , worker_(nullptr)
     , isProcessing_(false)
     , confThreshold_(Config::CONF_THRESHOLD)
     , nmsThreshold_(Config::IOU_THRESHOLD)
@@ -287,23 +325,23 @@ MainWindow::MainWindow(QWidget *parent)
     statusMessageLabel_->setText("就绪 - 请加载模型后开始检测");
     ui->modelPathEdit->setText(QString::fromStdString(Config::MODEL_PATH));
 
-    // 确保输出目录存在
     QDir().mkpath(QString::fromStdString(Config::OUTPUT_DIR));
 
     startWebSocketServer();
     if (fs::exists(Config::MODEL_PATH)) onLoadModel();
 
-    // 设置批量推理复选框初始状态
     ui->batchInferenceCheck->setChecked(Config::USE_BATCH_INFERENCE);
 
-    // 初始日志
     log("系统", "YOLO11 PPE 检测系统已启动");
     log("配置", QString("模型路径: %1").arg(QString::fromStdString(Config::MODEL_PATH)));
 }
 
 MainWindow::~MainWindow() {
-    if (isProcessing_) safeStopWorker();
-    // 清理所有待确认的告警定时器
+    stopAllCameras();
+    if (isProcessing_) {
+        // 视频模式清理
+        isProcessing_ = false;
+    }
     for (auto it = pendingAlarms_.begin(); it != pendingAlarms_.end(); ++it) {
         if (it->retryTimer) {
             it->retryTimer->stop();
@@ -327,6 +365,7 @@ void MainWindow::setupConnections() {
     connect(ui->openImageBtn,  &QPushButton::clicked, this, &MainWindow::onOpenImage);
     connect(ui->openVideoBtn,  &QPushButton::clicked, this, &MainWindow::onOpenVideo);
     connect(ui->cameraBtn,     &QPushButton::toggled, this, &MainWindow::onOpenCamera);
+    connect(ui->addCameraBtn,  &QPushButton::clicked, this, &MainWindow::onAddCamera);
     connect(ui->folderBtn,     &QPushButton::clicked, this, &MainWindow::onOpenFolder);
     connect(ui->stopBtn,       &QPushButton::clicked, this, &MainWindow::onStopProcessing);
     connect(ui->browseModelBtn, &QPushButton::clicked, this, &MainWindow::onBrowseModel);
@@ -341,7 +380,7 @@ void MainWindow::setupConnections() {
     connect(ui->actionOpenImage, &QAction::triggered, this, &MainWindow::onOpenImage);
     connect(ui->actionOpenVideo, &QAction::triggered, this, &MainWindow::onOpenVideo);
     connect(ui->actionOpenCamera, &QAction::triggered, this, [this]() {
-        ui->cameraBtn->toggle();  // 菜单触发摄像头开关
+        ui->cameraBtn->toggle();
     });
     connect(ui->actionExit, &QAction::triggered, this, &QWidget::close);
     connect(ui->actionLoadModel, &QAction::triggered, this, &MainWindow::onLoadModel);
@@ -522,7 +561,7 @@ void MainWindow::retryAlarm(const QString& alarmId) {
 // ============================================================
 // 告警处理
 // ============================================================
-void MainWindow::onAlertSaved(const QString& videoPath, const QString& imagePath,
+void MainWindow::onAlertSaved(int cameraId, const QString& videoPath, const QString& imagePath,
                                const QString& alertJson) {
     // 解析 alarm_id
     QJsonDocument doc = QJsonDocument::fromJson(alertJson.toUtf8());
@@ -607,8 +646,8 @@ void MainWindow::onLoadModel() {
 // 推理模式
 // ============================================================
 void MainWindow::onOpenImage() {
-    if (!engine_) { QMessageBox::warning(this, "提示", "请先加载模型"); return; }
-    if (isProcessing_) onStopProcessing();
+    if (!engine_) { QMessageBox::warning(this, QString::fromUtf8("提示"), QString::fromUtf8("请先加载模型")); return; }
+    stopAllCameras();
     QString filePath = QFileDialog::getOpenFileName(
         this, "选择图片", "", "图片文件 (*.jpg *.jpeg *.png *.bmp);;所有文件 (*)");
     if (filePath.isEmpty()) return;
@@ -652,78 +691,185 @@ void MainWindow::processSingleImage(const std::string& path) {
 }
 
 void MainWindow::onOpenVideo() {
-    if (!engine_) { QMessageBox::warning(this, "提示", "请先加载模型"); return; }
+    if (!engine_) { QMessageBox::warning(this, QString::fromUtf8("提示"), QString::fromUtf8("请先加载模型")); return; }
+    stopAllCameras();
     if (isProcessing_) onStopProcessing();
 
     QString filePath = QFileDialog::getOpenFileName(
-        this, "选择视频文件", "", "视频文件 (*.mp4 *.avi *.mov *.mkv);;所有文件 (*)");
+        this, QString::fromUtf8("选择视频文件"), "", QString::fromUtf8("视频文件 (*.mp4 *.avi *.mov *.mkv);;所有文件 (*)"));
     if (filePath.isEmpty()) return;
 
     log("检测", QString("打开视频: %1").arg(filePath));
-    statusMessageLabel_->setText("正在处理视频...");
+    statusMessageLabel_->setText(QString::fromUtf8("正在处理视频..."));
     enableControls(false);
-    ui->cameraBtn->setChecked(false);  // 确保摄像头关闭
+    ui->cameraBtn->setChecked(false);
     ui->stopBtn->setEnabled(true);
     isProcessing_ = true;
 
-    workerThread_ = new QThread(this);
-    worker_ = new InferenceWorker(engine_.get());
-    worker_->moveToThread(workerThread_);
+    auto* thread = new QThread(this);
+    auto* worker = new InferenceWorker(engine_.get(), -1, "video", filePath);
+    worker->moveToThread(thread);
 
-    connect(worker_, &InferenceWorker::frameProcessed, this, &MainWindow::onFrameProcessed);
-    connect(worker_, &InferenceWorker::alertSaved, this, &MainWindow::onAlertSaved);
-    connect(worker_, &InferenceWorker::finished, this, &MainWindow::onWorkerFinished);
-    connect(worker_, &InferenceWorker::errorOccurred, this, &MainWindow::onWorkerError);
-    connect(workerThread_, &QThread::started, worker_, [this, filePath]() {
-        worker_->setBatchInference(ui->batchInferenceCheck->isChecked());
-        worker_->processVideo(filePath, confThreshold_, nmsThreshold_);
+    connect(worker, &InferenceWorker::frameProcessed, this, &MainWindow::onFrameProcessed);
+    connect(worker, &InferenceWorker::alertSaved, this, &MainWindow::onAlertSaved);
+    connect(worker, &InferenceWorker::finished, this, [this](int cameraId) {
+        // 视频模式结束
+        isProcessing_ = false;
+        enableControls(true);
+        ui->stopBtn->setEnabled(false);
+        statusMessageLabel_->setText(QString::fromUtf8("视频处理完成"));
+        fpsLabel_->setText("FPS: --");
+        log("系统", "视频处理完成");
+        // 视频worker不在cameraWorkers_中, 手动清理
+        sender()->deleteLater();
     });
-    connect(workerThread_, &QThread::finished, worker_, &QObject::deleteLater);
-    workerThread_->start();
+    connect(worker, &InferenceWorker::errorOccurred, this, [this](int, const QString& msg) {
+        QMessageBox::critical(this, QString::fromUtf8("处理错误"), msg);
+    });
+    connect(thread, &QThread::started, worker, [this, worker, filePath]() {
+        worker->setBatchInference(ui->batchInferenceCheck->isChecked());
+        worker->processVideo(filePath, confThreshold_, nmsThreshold_);
+    });
+    connect(thread, &QThread::finished, worker, &QObject::deleteLater);
+
+    activeDisplayCamera_ = -1;
+    thread->start();
 }
 
 void MainWindow::onOpenCamera(bool checked) {
     if (checked) {
-        // 开启摄像头
         if (!engine_) {
-            QMessageBox::warning(this, "提示", "请先加载模型");
+            QMessageBox::warning(this, QString::fromUtf8("提示"), QString::fromUtf8("请先加载模型"));
             ui->cameraBtn->setChecked(false);
             return;
         }
-        if (isProcessing_) onStopProcessing();
+        // 如果默认摄像头已在运行, 先停止
+        if (cameraWorkers_.contains(0)) stopCamera(0);
 
-        log("检测", "启动摄像头推理");
-        statusMessageLabel_->setText("正在启动摄像头...");
-        enableControls(false);
-        ui->cameraBtn->setEnabled(true);  // 摄像头按钮始终可用
-        ui->cameraBtn->setText("关闭摄像头");
+        log("检测", "启动默认摄像头");
+        statusMessageLabel_->setText(QString::fromUtf8("正在启动摄像头..."));
+        ui->cameraBtn->setText(QString::fromUtf8("关闭摄像头"));
         ui->cameraStatusLabel->setStyleSheet("font-size: 20px; font-weight: bold; padding: 0 12px; color: green;");
-        ui->cameraStatusLabel->setText("● 已开启");
-        isProcessing_ = true;
+        ui->cameraStatusLabel->setText(QString::fromUtf8("● 已开启"));
+        activeDisplayCamera_ = 0;
 
-        workerThread_ = new QThread(this);
-        worker_ = new InferenceWorker(engine_.get());
-        worker_->moveToThread(workerThread_);
+        auto* thread = new QThread(this);
+        auto* worker = new InferenceWorker(engine_.get(), 0, "camera_0");
+        worker->moveToThread(thread);
 
-        connect(worker_, &InferenceWorker::frameProcessed, this, &MainWindow::onFrameProcessed);
-        connect(worker_, &InferenceWorker::alertSaved, this, &MainWindow::onAlertSaved);
-        connect(worker_, &InferenceWorker::finished, this, &MainWindow::onWorkerFinished);
-        connect(worker_, &InferenceWorker::errorOccurred, this, &MainWindow::onWorkerError);
-        connect(workerThread_, &QThread::started, worker_, [this]() {
-            worker_->setBatchInference(ui->batchInferenceCheck->isChecked());
-            worker_->processCamera(confThreshold_, nmsThreshold_);
+        connect(worker, &InferenceWorker::frameProcessed, this, &MainWindow::onFrameProcessed);
+        connect(worker, &InferenceWorker::alertSaved, this, &MainWindow::onAlertSaved);
+        connect(worker, &InferenceWorker::finished, this, &MainWindow::onWorkerFinished);
+        connect(worker, &InferenceWorker::errorOccurred, this, &MainWindow::onWorkerError);
+        connect(thread, &QThread::started, worker, [this, worker]() {
+            worker->setBatchInference(ui->batchInferenceCheck->isChecked());
+            worker->processCamera(confThreshold_, nmsThreshold_);
         });
-        connect(workerThread_, &QThread::finished, worker_, &QObject::deleteLater);
-        workerThread_->start();
+        connect(thread, &QThread::finished, worker, &QObject::deleteLater);
+
+        CameraWorker cw{thread, worker, nullptr};
+        cameraWorkers_[0] = cw;
+        thread->start();
     } else {
-        // 关闭摄像头
-        onStopProcessing();
+        stopCamera(0);
+    }
+}
+
+void MainWindow::onAddCamera() {
+    if (!engine_) {
+        QMessageBox::warning(this, QString::fromUtf8("提示"), QString::fromUtf8("请先加载模型"));
+        return;
+    }
+
+    // 弹出对话框: 输入摄像头设备ID或RTSP地址
+    bool ok = false;
+    QString source = QInputDialog::getText(this,
+        QString::fromUtf8("添加摄像头"),
+        QString::fromUtf8("输入摄像头设备ID(0,1,2...)或RTSP地址:"),
+        QLineEdit::Normal, "", &ok);
+    if (!ok || source.isEmpty()) return;
+
+    int camId = nextCameraId_++;
+    QString camName = QString("camera_%1").arg(camId);
+
+    log("检测", QString("添加摄像头 %1: %2").arg(camId).arg(source));
+    activeDisplayCamera_ = camId;
+
+    auto* thread = new QThread(this);
+    auto* worker = new InferenceWorker(engine_.get(), camId, camName, source);
+    worker->moveToThread(thread);
+
+    connect(worker, &InferenceWorker::frameProcessed, this, &MainWindow::onFrameProcessed);
+    connect(worker, &InferenceWorker::alertSaved, this, &MainWindow::onAlertSaved);
+    connect(worker, &InferenceWorker::finished, this, &MainWindow::onWorkerFinished);
+    connect(worker, &InferenceWorker::errorOccurred, this, &MainWindow::onWorkerError);
+    connect(thread, &QThread::started, worker, [this, worker]() {
+        worker->setBatchInference(ui->batchInferenceCheck->isChecked());
+        worker->processSource(confThreshold_, nmsThreshold_);
+    });
+    connect(thread, &QThread::finished, worker, &QObject::deleteLater);
+
+    CameraWorker cw{thread, worker, nullptr};
+    cameraWorkers_[camId] = cw;
+    thread->start();
+
+    // 更新摄像头状态显示
+    ui->cameraStatusLabel->setStyleSheet("font-size: 20px; font-weight: bold; padding: 0 12px; color: green;");
+    ui->cameraStatusLabel->setText(QString::fromUtf8("● %1路运行").arg(cameraWorkers_.size()));
+    ui->stopBtn->setEnabled(true);
+}
+
+void MainWindow::onRemoveCamera(int cameraId) {
+    stopCamera(cameraId);
+}
+
+void MainWindow::stopCamera(int cameraId) {
+    auto it = cameraWorkers_.find(cameraId);
+    if (it == cameraWorkers_.end()) return;
+
+    if (it->worker) it->worker->stop();
+    if (it->thread) {
+        if (!it->thread->wait(3000)) {
+            it->thread->terminate();
+            it->thread->wait();
+        }
+    }
+
+    // 如果是默认摄像头, 重置UI
+    if (cameraId == 0) {
+        ui->cameraBtn->setChecked(false);
+        ui->cameraBtn->setText(QString::fromUtf8("开启摄像头"));
+    }
+
+    cameraWorkers_.erase(it);
+
+    // 强制释放摄像头资源
+    cv::VideoCapture forceRelease(cameraId, cv::CAP_DSHOW);
+    if (forceRelease.isOpened()) forceRelease.release();
+
+    if (cameraWorkers_.isEmpty()) {
+        ui->cameraStatusLabel->setStyleSheet("font-size: 20px; font-weight: bold; padding: 0 12px;");
+        ui->cameraStatusLabel->setText(QString::fromUtf8("⏹ 未开启"));
+        ui->stopBtn->setEnabled(false);
+        fpsLabel_->setText("FPS: --");
+    } else {
+        ui->cameraStatusLabel->setText(QString::fromUtf8("● %1路运行").arg(cameraWorkers_.size()));
+    }
+
+    log("系统", QString("摄像头 %1 已停止").arg(cameraId));
+}
+
+void MainWindow::stopAllCameras() {
+    // 复制key列表避免迭代时修改
+    auto ids = cameraWorkers_.keys();
+    for (int id : ids) {
+        stopCamera(id);
     }
 }
 
 void MainWindow::onOpenFolder() {
-    if (!engine_) { QMessageBox::warning(this, "提示", "请先加载模型"); return; }
-    if (isProcessing_) onStopProcessing();
+    if (!engine_) { QMessageBox::warning(this, QString::fromUtf8("提示"), QString::fromUtf8("请先加载模型")); return; }
+    stopAllCameras();
 
     QString dirPath = QFileDialog::getExistingDirectory(
         this, "选择图片文件夹", "", QFileDialog::ShowDirsOnly);
@@ -771,51 +917,23 @@ void MainWindow::onOpenFolder() {
     }
 }
 
-void MainWindow::onStopProcessing() { safeStopWorker(); }
-
-void MainWindow::safeStopWorker() {
-    if (!isProcessing_ || !workerThread_ || !worker_) return;
-
-    // 先标记停止，让工作线程退出循环
-    worker_->stop();
-
-    // 等待线程正常退出
-    if (!workerThread_->wait(5000)) {
-        // 超时强杀
-        workerThread_->terminate();
-        workerThread_->wait();
-    }
-
-    // 断开所有信号，防止onWorkerFinished再次访问已置空的指针
-    if (worker_) {
-        worker_->disconnect();
-    }
-
-    worker_ = nullptr;
-    workerThread_ = nullptr;
+void MainWindow::onStopProcessing() {
+    stopAllCameras();
     isProcessing_ = false;
-
-    // 强制释放可能残留的摄像头资源(terminate后VideoCapture析构可能未执行)
-    cv::VideoCapture forceRelease(0, cv::CAP_DSHOW);
-    if (forceRelease.isOpened()) {
-        forceRelease.release();
-    }
-
     enableControls(true);
     ui->stopBtn->setEnabled(false);
-    ui->cameraBtn->setChecked(false);
-    ui->cameraBtn->setText("开启摄像头");
-    ui->cameraStatusLabel->setStyleSheet("font-size: 20px; font-weight: bold; padding: 0 12px;");
-    ui->cameraStatusLabel->setText("⏹ 未开启");
     fpsLabel_->setText("FPS: --");
-    statusMessageLabel_->setText("已停止");
-    log("系统", "处理已停止");
+    statusMessageLabel_->setText(QString::fromUtf8("已停止"));
+    log("系统", "所有处理已停止");
 }
 
-void MainWindow::onFrameProcessed(QImage image, std::vector<Detection> detections, double elapsedMs) {
-    updateDisplay(image);
-    updateDetectionList(detections, elapsedMs);
-    if (elapsedMs > 0) {
+void MainWindow::onFrameProcessed(int cameraId, QImage image, std::vector<Detection> detections, double elapsedMs) {
+    // 只更新当前活跃显示的摄像头画面
+    if (cameraId == activeDisplayCamera_) {
+        updateDisplay(image);
+        updateDetectionList(detections, elapsedMs);
+    }
+    if (elapsedMs > 0 && cameraId == activeDisplayCamera_) {
         double fps = 1000.0 / elapsedMs;
         fpsLabel_->setText(QString("FPS: %1").arg(fps, 0, 'f', 1));
     }
@@ -843,33 +961,40 @@ void MainWindow::onFrameProcessed(QImage image, std::vector<Detection> detection
     }
 }
 
-void MainWindow::onWorkerFinished() {
-    // safeStopWorker可能已经清理过了，检查是否已被清理
-    if (!workerThread_ && !worker_) {
-        return;  // 已被safeStopWorker清理，跳过
+void MainWindow::onWorkerFinished(int cameraId) {
+    auto it = cameraWorkers_.find(cameraId);
+    if (it != cameraWorkers_.end()) {
+        if (it->thread) {
+            it->thread->quit();
+            it->thread->wait();
+        }
+        // 如果是默认摄像头, 重置UI
+        if (cameraId == 0) {
+            ui->cameraBtn->setChecked(false);
+            ui->cameraBtn->setText(QString::fromUtf8("开启摄像头"));
+            ui->cameraStatusLabel->setStyleSheet("font-size: 20px; font-weight: bold; padding: 0 12px;");
+            ui->cameraStatusLabel->setText(QString::fromUtf8("⏹ 未开启"));
+        }
+        cameraWorkers_.erase(it);
+        log("系统", QString("摄像头 %1 处理完成").arg(cameraId));
     }
-    if (workerThread_) {
-        workerThread_->quit();
-        workerThread_->wait();
-        worker_ = nullptr;
-        workerThread_ = nullptr;
+
+    // 如果没有任何活跃worker, 重置UI
+    if (cameraWorkers_.isEmpty()) {
+        isProcessing_ = false;
+        enableControls(true);
+        ui->stopBtn->setEnabled(false);
+        fpsLabel_->setText("FPS: --");
+        statusMessageLabel_->setText("处理完成");
     }
-    isProcessing_ = false;
-    enableControls(true);
-    ui->stopBtn->setEnabled(false);
-    ui->cameraBtn->setChecked(false);
-    ui->cameraBtn->setText("开启摄像头");
-    ui->cameraStatusLabel->setStyleSheet("font-size: 20px; font-weight: bold; padding: 0 12px;");
-    ui->cameraStatusLabel->setText("⏹ 未开启");
-    statusMessageLabel_->setText("处理完成");
-    fpsLabel_->setText("FPS: --");
-    log("系统", "处理任务已完成");
 }
 
-void MainWindow::onWorkerError(const QString& message) {
-    log("错误", message);
-    QMessageBox::critical(this, "处理错误", message);
-    onWorkerFinished();
+void MainWindow::onWorkerError(int cameraId, const QString& message) {
+    log("错误", QString("[摄像头%1] %2").arg(cameraId).arg(message));
+    if (cameraId == 0) {
+        ui->cameraBtn->setChecked(false);
+    }
+    onWorkerFinished(cameraId);
 }
 
 void MainWindow::onConfThresholdChanged(int value) {
@@ -966,7 +1091,8 @@ void MainWindow::enableControls(bool enabled) {
 }
 
 void MainWindow::closeEvent(QCloseEvent* event) {
-    if (isProcessing_) safeStopWorker();
+    stopAllCameras();
+    if (isProcessing_) isProcessing_ = false;
     event->accept();
 }
 
@@ -977,16 +1103,21 @@ void MainWindow::onBatchInferenceToggled(bool checked) {
     if (checked) {
         if (Config::BATCH_SIZE <= 1) {
             ui->batchInferenceCheck->setChecked(false);
-            log("配置", "当前BATCH_SIZE=1, 无法启用批量推理");
+            log(QString::fromUtf8("配置"), QString::fromUtf8("当前BATCH_SIZE=1, 无法启用批量推理"));
             return;
         }
-        if (worker_) worker_->setBatchInference(true);
-        statusMessageLabel_->setText(QString("批量推理已启用 (batch=%1)").arg(Config::BATCH_SIZE));
-        log("配置", QString("批量推理已启用 (batch=%1)").arg(Config::BATCH_SIZE));
+        // 设置所有活跃worker
+        for (auto& cw : cameraWorkers_) {
+            if (cw.worker) cw.worker->setBatchInference(true);
+        }
+        statusMessageLabel_->setText(QString::fromUtf8("批量推理已启用 (batch=%1)").arg(Config::BATCH_SIZE));
+        log(QString::fromUtf8("配置"), QString::fromUtf8("批量推理已启用 (batch=%1)").arg(Config::BATCH_SIZE));
     } else {
-        if (worker_) worker_->setBatchInference(false);
-        statusMessageLabel_->setText("批量推理已禁用, 使用单帧推理");
-        log("配置", "批量推理已禁用");
+        for (auto& cw : cameraWorkers_) {
+            if (cw.worker) cw.worker->setBatchInference(false);
+        }
+        statusMessageLabel_->setText(QString::fromUtf8("批量推理已禁用, 使用单帧推理"));
+        log(QString::fromUtf8("配置"), QString::fromUtf8("批量推理已禁用"));
     }
 }
 

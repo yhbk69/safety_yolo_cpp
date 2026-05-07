@@ -277,6 +277,13 @@ QListWidget::item { padding: 8px; }</string>
        </widget>
       </item>
       <item>
+       <widget class="QPushButton" name="addCameraBtn">
+        <property name="text">
+         <string>添加摄像头</string>
+        </property>
+       </widget>
+      </item>
+      <item>
        <widget class="QLabel" name="cameraStatusLabel">
         <property name="styleSheet">
          <string notr="true">font-size: 20px; font-weight: bold; padding: 0 12px;</string>

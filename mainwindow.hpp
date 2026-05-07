@@ -39,21 +39,27 @@ class InferenceWorker : public QObject {
     Q_OBJECT
 
 public:
-    explicit InferenceWorker(YoloTrtEngine* engine);
+    explicit InferenceWorker(YoloTrtEngine* engine, int cameraId = 0,
+                             const QString& cameraName = "camera_0",
+                             const QString& source = "");
     ~InferenceWorker() override = default;
+
+    int cameraId() const { return cameraId_; }
+    QString cameraName() const { return cameraName_; }
 
 public slots:
     void processVideo(const QString& path, float confThresh, float nmsThresh);
     void processCamera(float confThresh, float nmsThresh);
+    void processSource(float confThresh, float nmsThresh);
     void stop();
     void setBatchInference(bool enabled) { useBatchInference_ = enabled; }
 
 signals:
-    void frameProcessed(QImage image, std::vector<Detection> detections, double elapsedMs);
+    void frameProcessed(int cameraId, QImage image, std::vector<Detection> detections, double elapsedMs);
     // 告警视频文件已保存: 视频路径, 截图路径, 告警JSON
-    void alertSaved(QString videoPath, QString imagePath, QString alertJson);
-    void finished();
-    void errorOccurred(const QString& message);
+    void alertSaved(int cameraId, QString videoPath, QString imagePath, QString alertJson);
+    void finished(int cameraId);
+    void errorOccurred(int cameraId, const QString& message);
 
 private:
     struct FrameResult {
@@ -66,6 +72,9 @@ private:
     void saveAlertFiles(const QString& alarmId, const QString& alarmType);
 
     YoloTrtEngine* engine_;
+    int cameraId_;
+    QString cameraName_;
+    QString source_;  // 摄像头源: 数字=设备ID, rtsp://=RTSP流, 空=使用cameraId_
     std::atomic<bool> running_{false};
 
     // 批量推理状态
@@ -108,19 +117,21 @@ private slots:
     void onOpenImage();
     void onOpenVideo();
     void onOpenCamera(bool checked);
+    void onAddCamera();
+    void onRemoveCamera(int cameraId);
     void onOpenFolder();
     void onBrowseModel();
     void onLoadModel();
     void onStopProcessing();
     void onConfThresholdChanged(int value);
     void onNmsThresholdChanged(int value);
-    void onBatchInferenceToggled(bool checked);  // 批量推理开关
-    void onFrameProcessed(QImage image, std::vector<Detection> detections, double elapsedMs);
-    void onWorkerFinished();
-    void onWorkerError(const QString& message);
+    void onBatchInferenceToggled(bool checked);
+    void onFrameProcessed(int cameraId, QImage image, std::vector<Detection> detections, double elapsedMs);
+    void onWorkerFinished(int cameraId);
+    void onWorkerError(int cameraId, const QString& message);
 
     // 告警
-    void onAlertSaved(const QString& videoPath, const QString& imagePath, const QString& alertJson);
+    void onAlertSaved(int cameraId, const QString& videoPath, const QString& imagePath, const QString& alertJson);
     void onWsClientConnected();
     void onWsTextMessage(const QString& message);
     void retryAlarm(const QString& alarmId);
@@ -132,10 +143,21 @@ private:
     void updateDisplay(const QImage& image);
     void updateDetectionList(const std::vector<Detection>& detections, double elapsedMs);
     void enableControls(bool enabled);
-    void safeStopWorker();
+    void stopCamera(int cameraId);
+    void stopAllCameras();
     void startWebSocketServer();
     void startHttpFileServer();
     void closeEvent(QCloseEvent* event) override;
+
+    // 多摄像头管理
+    struct CameraWorker {
+        QThread* thread = nullptr;
+        InferenceWorker* worker = nullptr;
+        QLabel* displayLabel = nullptr;  // 该路对应的显示标签
+    };
+    QMap<int, CameraWorker> cameraWorkers_;
+    int nextCameraId_ = 1;  // 下一个可用的摄像头ID(0保留给默认摄像头按钮)
+    int activeDisplayCamera_ = 0;  // 当前显示画面的摄像头ID
 
     Ui::MainWindow* ui;
     QLabel* statusMessageLabel_;
@@ -148,8 +170,6 @@ private:
     QString currentTimestamp();
 
     std::unique_ptr<YoloTrtEngine> engine_;
-    QThread*  workerThread_ = nullptr;
-    InferenceWorker* worker_ = nullptr;
 
     QWebSocketServer* wsServer_ = nullptr;
     QList<QWebSocket*> wsClients_;
@@ -163,9 +183,9 @@ private:
     };
     QMap<QString, PendingAlarm> pendingAlarms_;
 
-    static constexpr int MAX_RETRY_COUNT = 10;  // 最大重试次数
+    static constexpr int MAX_RETRY_COUNT = 10;
 
-    bool isProcessing_ = false;
+    bool isProcessing_ = false;  // 视频模式用
     float confThreshold_;
     float nmsThreshold_;
 };
