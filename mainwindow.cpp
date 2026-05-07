@@ -326,7 +326,7 @@ MainWindow::~MainWindow() {
 void MainWindow::setupConnections() {
     connect(ui->openImageBtn,  &QPushButton::clicked, this, &MainWindow::onOpenImage);
     connect(ui->openVideoBtn,  &QPushButton::clicked, this, &MainWindow::onOpenVideo);
-    connect(ui->cameraBtn,     &QPushButton::clicked, this, &MainWindow::onOpenCamera);
+    connect(ui->cameraBtn,     &QPushButton::toggled, this, &MainWindow::onOpenCamera);
     connect(ui->folderBtn,     &QPushButton::clicked, this, &MainWindow::onOpenFolder);
     connect(ui->stopBtn,       &QPushButton::clicked, this, &MainWindow::onStopProcessing);
     connect(ui->browseModelBtn, &QPushButton::clicked, this, &MainWindow::onBrowseModel);
@@ -340,7 +340,9 @@ void MainWindow::setupConnections() {
     });
     connect(ui->actionOpenImage, &QAction::triggered, this, &MainWindow::onOpenImage);
     connect(ui->actionOpenVideo, &QAction::triggered, this, &MainWindow::onOpenVideo);
-    connect(ui->actionOpenCamera, &QAction::triggered, this, &MainWindow::onOpenCamera);
+    connect(ui->actionOpenCamera, &QAction::triggered, this, [this]() {
+        ui->cameraBtn->toggle();  // 菜单触发摄像头开关
+    });
     connect(ui->actionExit, &QAction::triggered, this, &QWidget::close);
     connect(ui->actionLoadModel, &QAction::triggered, this, &MainWindow::onLoadModel);
 }
@@ -660,6 +662,7 @@ void MainWindow::onOpenVideo() {
     log("检测", QString("打开视频: %1").arg(filePath));
     statusMessageLabel_->setText("正在处理视频...");
     enableControls(false);
+    ui->cameraBtn->setChecked(false);  // 确保摄像头关闭
     ui->stopBtn->setEnabled(true);
     isProcessing_ = true;
 
@@ -679,30 +682,43 @@ void MainWindow::onOpenVideo() {
     workerThread_->start();
 }
 
-void MainWindow::onOpenCamera() {
-    if (!engine_) { QMessageBox::warning(this, "提示", "请先加载模型"); return; }
-    if (isProcessing_) onStopProcessing();
+void MainWindow::onOpenCamera(bool checked) {
+    if (checked) {
+        // 开启摄像头
+        if (!engine_) {
+            QMessageBox::warning(this, "提示", "请先加载模型");
+            ui->cameraBtn->setChecked(false);
+            return;
+        }
+        if (isProcessing_) onStopProcessing();
 
-    log("检测", "启动摄像头推理");
-    statusMessageLabel_->setText("正在启动摄像头...");
-    enableControls(false);
-    ui->stopBtn->setEnabled(true);
-    isProcessing_ = true;
+        log("检测", "启动摄像头推理");
+        statusMessageLabel_->setText("正在启动摄像头...");
+        enableControls(false);
+        ui->cameraBtn->setEnabled(true);  // 摄像头按钮始终可用
+        ui->cameraBtn->setText("关闭摄像头");
+        ui->cameraStatusLabel->setStyleSheet("font-size: 20px; font-weight: bold; padding: 0 12px; color: green;");
+        ui->cameraStatusLabel->setText("● 已开启");
+        isProcessing_ = true;
 
-    workerThread_ = new QThread(this);
-    worker_ = new InferenceWorker(engine_.get());
-    worker_->moveToThread(workerThread_);
+        workerThread_ = new QThread(this);
+        worker_ = new InferenceWorker(engine_.get());
+        worker_->moveToThread(workerThread_);
 
-    connect(worker_, &InferenceWorker::frameProcessed, this, &MainWindow::onFrameProcessed);
-    connect(worker_, &InferenceWorker::alertSaved, this, &MainWindow::onAlertSaved);
-    connect(worker_, &InferenceWorker::finished, this, &MainWindow::onWorkerFinished);
-    connect(worker_, &InferenceWorker::errorOccurred, this, &MainWindow::onWorkerError);
-    connect(workerThread_, &QThread::started, worker_, [this]() {
-        worker_->setBatchInference(ui->batchInferenceCheck->isChecked());
-        worker_->processCamera(confThreshold_, nmsThreshold_);
-    });
-    connect(workerThread_, &QThread::finished, worker_, &QObject::deleteLater);
-    workerThread_->start();
+        connect(worker_, &InferenceWorker::frameProcessed, this, &MainWindow::onFrameProcessed);
+        connect(worker_, &InferenceWorker::alertSaved, this, &MainWindow::onAlertSaved);
+        connect(worker_, &InferenceWorker::finished, this, &MainWindow::onWorkerFinished);
+        connect(worker_, &InferenceWorker::errorOccurred, this, &MainWindow::onWorkerError);
+        connect(workerThread_, &QThread::started, worker_, [this]() {
+            worker_->setBatchInference(ui->batchInferenceCheck->isChecked());
+            worker_->processCamera(confThreshold_, nmsThreshold_);
+        });
+        connect(workerThread_, &QThread::finished, worker_, &QObject::deleteLater);
+        workerThread_->start();
+    } else {
+        // 关闭摄像头
+        onStopProcessing();
+    }
 }
 
 void MainWindow::onOpenFolder() {
@@ -787,6 +803,10 @@ void MainWindow::safeStopWorker() {
 
     enableControls(true);
     ui->stopBtn->setEnabled(false);
+    ui->cameraBtn->setChecked(false);
+    ui->cameraBtn->setText("开启摄像头");
+    ui->cameraStatusLabel->setStyleSheet("font-size: 20px; font-weight: bold; padding: 0 12px;");
+    ui->cameraStatusLabel->setText("⏹ 未开启");
     fpsLabel_->setText("FPS: --");
     statusMessageLabel_->setText("已停止");
     log("系统", "处理已停止");
@@ -837,6 +857,10 @@ void MainWindow::onWorkerFinished() {
     isProcessing_ = false;
     enableControls(true);
     ui->stopBtn->setEnabled(false);
+    ui->cameraBtn->setChecked(false);
+    ui->cameraBtn->setText("开启摄像头");
+    ui->cameraStatusLabel->setStyleSheet("font-size: 20px; font-weight: bold; padding: 0 12px;");
+    ui->cameraStatusLabel->setText("⏹ 未开启");
     statusMessageLabel_->setText("处理完成");
     fpsLabel_->setText("FPS: --");
     log("系统", "处理任务已完成");

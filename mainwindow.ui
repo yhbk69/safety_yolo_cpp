@@ -262,7 +262,10 @@ QListWidget::item { padding: 8px; }</string>
       <item>
        <widget class="QPushButton" name="cameraBtn">
         <property name="text">
-         <string>摄像头</string>
+         <string>开启摄像头</string>
+        </property>
+        <property name="checkable">
+         <bool>true</bool>
         </property>
        </widget>
       </item>
@@ -270,6 +273,16 @@ QListWidget::item { padding: 8px; }</string>
        <widget class="QPushButton" name="folderBtn">
         <property name="text">
          <string>批量文件夹</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QLabel" name="cameraStatusLabel">
+        <property name="styleSheet">
+         <string notr="true">font-size: 20px; font-weight: bold; padding: 0 12px;</string>
+        </property>
+        <property name="text">
+         <string>⏹ 未开启</string>
         </property>
        </widget>
       </item>

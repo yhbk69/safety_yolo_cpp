@@ -107,7 +107,7 @@ public:
 private slots:
     void onOpenImage();
     void onOpenVideo();
-    void onOpenCamera();
+    void onOpenCamera(bool checked);
     void onOpenFolder();
     void onBrowseModel();
     void onLoadModel();
