@@ -104,6 +104,7 @@ private slots:
     void onStopProcessing();
     void onConfThresholdChanged(int value);
     void onNmsThresholdChanged(int value);
+    void onBatchInferenceToggled(bool checked);  // 批量推理开关
     void onFrameProcessed(QImage image, std::vector<Detection> detections, double elapsedMs);
     void onWorkerFinished();
     void onWorkerError(const QString& message);

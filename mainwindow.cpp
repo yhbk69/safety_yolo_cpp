@@ -241,6 +241,9 @@ MainWindow::MainWindow(QWidget *parent)
 
     startWebSocketServer();
     if (fs::exists(Config::MODEL_PATH)) onLoadModel();
+
+    // 设置批量推理复选框初始状态
+    ui->batchInferenceCheck->setChecked(Config::USE_BATCH_INFERENCE);
 }
 
 MainWindow::~MainWindow() {
@@ -275,6 +278,7 @@ void MainWindow::setupConnections() {
     connect(ui->loadModelBtn,   &QPushButton::clicked, this, &MainWindow::onLoadModel);
     connect(ui->confSlider, &QSlider::valueChanged, this, &MainWindow::onConfThresholdChanged);
     connect(ui->nmsSlider,  &QSlider::valueChanged, this, &MainWindow::onNmsThresholdChanged);
+    connect(ui->batchInferenceCheck, &QCheckBox::toggled, this, &MainWindow::onBatchInferenceToggled);
     connect(ui->actionOpenImage, &QAction::triggered, this, &MainWindow::onOpenImage);
     connect(ui->actionOpenVideo, &QAction::triggered, this, &MainWindow::onOpenVideo);
     connect(ui->actionOpenCamera, &QAction::triggered, this, &MainWindow::onOpenCamera);
@@ -762,4 +766,17 @@ void MainWindow::enableControls(bool enabled) {
 void MainWindow::closeEvent(QCloseEvent* event) {
     if (isProcessing_) safeStopWorker();
     event->accept();
+}
+
+// ============================================================
+// 批量推理开关
+// ============================================================
+void MainWindow::onBatchInferenceToggled(bool checked) {
+    // 注意: 批量推理配置在编译时固定, 此处仅提示用户
+    if (checked) {
+        statusMessageLabel_->setText("批量推理已启用 (batch=4, 需重新编译生效)");
+    } else {
+        statusMessageLabel_->setText("批量推理已禁用 (需重新编译生效)");
+    }
+    qDebug() << "Batch inference toggled:" << checked;
 }

@@ -36,7 +36,7 @@ namespace Config {
 
     // 批量推理配置
     constexpr int BATCH_SIZE = 4;
-    constexpr bool USE_BATCH_INFERENCE = false; // 设为true启用批量推理
+    constexpr bool USE_BATCH_INFERENCE = true; // 设为true启用批量推理 (提升视频流性能)
 
     // 类别名称列表. 顺序必须与训练时的类别索引一致
     // 索引0=helmet, 1=gloves, 2=vest, 3=boots, 4=goggles

@@ -6,14 +6,14 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>960</width>
-    <height>700</height>
+    <width>1920</width>
+    <height>1080</height>
    </rect>
   </property>
   <property name="minimumSize">
    <size>
-    <width>960</width>
-    <height>700</height>
+    <width>1280</width>
+    <height>720</height>
    </size>
   </property>
   <property name="windowTitle">
@@ -75,6 +75,16 @@
        </widget>
       </item>
       <item>
+       <widget class="QCheckBox" name="batchInferenceCheck">
+        <property name="toolTip">
+         <string>启用批量推理可提升视频流处理性能 (batch=4)</string>
+        </property>
+        <property name="text">
+         <string>批量推理</string>
+        </property>
+       </widget>
+      </item>
+      <item>
        <widget class="QLabel" name="modelStatusLabel">
         <property name="styleSheet">
          <string notr="true">color: gray; font-weight: bold;</string>
@@ -88,6 +98,12 @@
     </item>
     <item>
      <widget class="QSplitter" name="splitter">
+      <property name="sizePolicy">
+       <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
+        <horstretch>0</horstretch>
+        <verstretch>0</verstretch>
+       </sizepolicy>
+      </property>
       <property name="orientation">
        <enum>Qt::Orientation::Horizontal</enum>
       </property>
@@ -100,8 +116,8 @@
        </property>
        <property name="minimumSize">
         <size>
-         <width>480</width>
-         <height>400</height>
+         <width>960</width>
+         <height>600</height>
         </size>
        </property>
        <property name="styleSheet">
@@ -331,7 +347,7 @@ QListWidget::item { padding: 4px; }</string>
     <rect>
      <x>0</x>
      <y>0</y>
-     <width>960</width>
+     <width>1920</width>
      <height>22</height>
     </rect>
    </property>
