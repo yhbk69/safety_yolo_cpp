@@ -21,13 +21,13 @@
   </property>
   <widget class="QWidget" name="centralWidget">
    <property name="styleSheet">
-   <string notr="true">* { font-size: 20px; }
-QLabel { font-size: 20px; }
-QPushButton { font-size: 20px; padding: 8px 16px; min-height: 32px; }
-QLineEdit { font-size: 20px; padding: 6px; min-height: 28px; }
-QComboBox { font-size: 20px; min-height: 28px; }
-QListWidget { font-size: 20px; }
-QTextEdit { font-size: 20px; }
+   <string notr="true">* { font-size: 18px; }
+QLabel { font-size: 24px; }
+QPushButton { font-size: 24px; padding: 8px 16px; min-height: 32px; }
+QLineEdit { font-size: 24px; padding: 6px; min-height: 28px; }
+QComboBox { font-size: 24px; min-height: 28px; }
+QListWidget { font-size: 24px; }
+QTextEdit { font-size: 60px; }
 QSlider { height: 28px; }</string>
    </property>
    <layout class="QVBoxLayout" name="mainLayout">
@@ -182,7 +182,7 @@ QSlider { height: 28px; }</string>
            </size>
           </property>
           <property name="styleSheet">
-           <string notr="true">QListWidget { font-size: 20px; }
+           <string notr="true">QListWidget { font-size: 18px; }
 QListWidget::item { padding: 8px; }</string>
           </property>
           <property name="alternatingRowColors">
@@ -193,7 +193,7 @@ QListWidget::item { padding: 8px; }</string>
         <item>
          <widget class="QLabel" name="totalCountLabel">
           <property name="styleSheet">
-           <string notr="true">font-size: 20px; color: #555;</string>
+           <string notr="true">font-size: 18px; color: #555;</string>
           </property>
           <property name="text">
            <string>目标总数: 0</string>
@@ -203,7 +203,7 @@ QListWidget::item { padding: 8px; }</string>
         <item>
          <widget class="QLabel" name="logTitleLabel">
           <property name="styleSheet">
-           <string notr="true">font-size: 24px; font-weight: bold; margin-top: 8px;</string>
+           <string notr="true">font-size: 26px; font-weight: bold; margin-top: 8px;</string>
           </property>
           <property name="text">
            <string>运行日志</string>
@@ -216,7 +216,7 @@ QListWidget::item { padding: 8px; }</string>
            <bool>true</bool>
           </property>
           <property name="styleSheet">
-           <string notr="true">QTextEdit { font-family: Consolas, Monaco, monospace; font-size: 18px; background-color: #1e1e1e; color: #d4d4d4; }</string>
+           <string notr="true">QTextEdit { font-family: Consolas, Monaco, monospace; font-size: 16px; background-color: #1e1e1e; color: #d4d4d4; }</string>
           </property>
          </widget>
         </item>

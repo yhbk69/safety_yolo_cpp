@@ -66,10 +66,15 @@ void InferenceWorker::processCamera(float confThresh, float nmsThresh) {
     running_ = true;
     while (running_) {
         cv::Mat frame;
-        if (!cap.read(frame)) break;
+        if (!cap.read(frame)) {
+            if (running_) {
+                emit errorOccurred("摄像头读取失败，设备可能已断开");
+            }
+            break;
+        }
         auto result = processOneFrame(frame, confThresh, nmsThresh);
         emit frameProcessed(result.image, result.detections, 0);
-        if (cv::waitKey(1) == 27) break;
+        QThread::msleep(1);  // 让出CPU，同时让stop()有机会被检测
     }
     cap.release();
     emit finished();
@@ -686,17 +691,30 @@ void MainWindow::onStopProcessing() { safeStopWorker(); }
 
 void MainWindow::safeStopWorker() {
     if (!isProcessing_ || !workerThread_ || !worker_) return;
+
+    // 先标记停止，让工作线程退出循环
     worker_->stop();
-    workerThread_->quit();
-    if (!workerThread_->wait(3000)) {
+
+    // 等待线程正常退出（不给quit，因为worker自己会emit finished退出事件循环）
+    if (!workerThread_->wait(5000)) {
+        // 超时强杀，摄像头可能未释放，但避免死锁
         workerThread_->terminate();
         workerThread_->wait();
     }
+
+    // 断开所有信号，防止onWorkerFinished再次访问已置空的指针
+    if (worker_) {
+        worker_->disconnect();
+    }
+
     worker_ = nullptr;
     workerThread_ = nullptr;
     isProcessing_ = false;
     enableControls(true);
     ui->stopBtn->setEnabled(false);
+    fpsLabel_->setText("FPS: --");
+    statusMessageLabel_->setText("已停止");
+    log("系统", "处理已停止");
 }
 
 void MainWindow::onFrameProcessed(QImage image, std::vector<Detection> detections, double elapsedMs) {
@@ -715,6 +733,10 @@ void MainWindow::onFrameProcessed(QImage image, std::vector<Detection> detection
 }
 
 void MainWindow::onWorkerFinished() {
+    // safeStopWorker可能已经清理过了，检查是否已被清理
+    if (!workerThread_ && !worker_) {
+        return;  // 已被safeStopWorker清理，跳过
+    }
     if (workerThread_) {
         workerThread_->quit();
         workerThread_->wait();
